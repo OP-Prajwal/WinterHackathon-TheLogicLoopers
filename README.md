@@ -9,7 +9,7 @@ Welcome to the Winter Hackathon organized by **Sceptix** and **GDG**! To track y
 1. Go to the GitHub page: [https://github.com/gdgsjec/WinterHackathon-TEAM_NAME-](https://github.com/gdgsjec/WinterHackathon-TEAM_NAME-)
 2. Click on the **"Fork"** button in the upper-right corner of the page
 3. Assign the repository name as `WinterHackathon-<TeamName>`
-> *📝 **Note:** Please use **[PascalCase](https://pascal-case.com/)** for your team name.
+> 📝 **Note:** Please use **[PascalCase](https://pascal-case.com/)** for your team name.
 
 
 **Example:**
