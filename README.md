@@ -1,6 +1,6 @@
 #  Winter Hackathon - Repository Setup Guide
 
-Welcome to the Winter Hackathon organized by **Secptix** and **GDG**! To track your progress and collaborate effectively, every team must fork the official repository and follow the steps below.
+Welcome to the Winter Hackathon organized by **Sceptix** and **GDG**! To track your progress and collaborate effectively, every team must fork the official repository and follow the steps below.
 
 ---
 
@@ -8,7 +8,9 @@ Welcome to the Winter Hackathon organized by **Secptix** and **GDG**! To track y
 
 1. Go to the GitHub page: [https://github.com/gdgsjec/WinterHackathon-TEAM_NAME-](https://github.com/gdgsjec/WinterHackathon-TEAM_NAME-)
 2. Click on the **"Fork"** button in the upper-right corner of the page
-3. Assign the repository name as `WinterHackathon-<Team_Name>`
+3. Assign the repository name as `WinterHackathon-<TeamName>`
+> *📝 **Note:** Please use **[PascalCase](https://pascal-case.com/)** for your team name.
+
 
 **Example:**
 ```
@@ -114,4 +116,4 @@ For any issues or doubts, reach out to the organizing team.
 
 ---
 
-*Organized by Secptix & GDG*  
+*Organized by Sceptix & GDG*  
