@@ -1,6 +1,6 @@
 #  Winter Hackathon - Repository Setup Guide
 
-Welcome to the Winter Hackathon organized by **Sceptix** and **GDG**! To track your progress and collaborate effectively, every team must fork the official repository and follow the steps below.
+Welcome to the Winter Hackathon organized by **Sceptix** and **GDG SJEC**! To track your progress and collaborate effectively, every team must fork the official repository and follow the steps below.
 
 ---
 
@@ -36,6 +36,53 @@ git clone <repository-url>
 Begin building your solution! Collaborate with your teammates and push changes regularly.
 
 ---
+## Update the README (Mandatory)
+
+Before writing any code, replace the existing README.md with information specific to your project.
+Your README is the first thing mentors and judges will see, so make sure it clearly explains what you built and why.
+You can replace the README with the recommended template below and update the contents as you work on the project.
+
+### Recommended Format for README:
+Use the structure below:
+```
+ # Project Name
+
+## Description
+Briefly explain what your project does, the problem it solves, and who it is for.
+
+# Demo Video Link: <insert Google Drive link to the demo video of the working of your project>
+
+## Features
+- Key feature 1
+- Key feature 2
+- Key feature 3
+
+## Tech Stack
+List the technologies, frameworks, and tools used in the project.
+
+## Google Technologies Used
+> ⚠️ Using Google products is **mandatory** for this hackathon.
+
+List the Google technologies you used and clearly explain **why** you chose them.
+
+**Example:**
+- **Firebase Authentication** – For secure and easy user authentication
+- **Firebase Firestore** – To store and manage real-time data
+- **Google Maps API** – To enable location-based features
+
+## Setup Instructions
+Steps to run the project locally:
+1. Clone the repository
+2. Install dependencies
+3. Add environment variables (if any)
+4. Run the project
+
+## Team Members
+- Name 1
+- Name 2
+- Name 3
+```
+
 
 ## Commit Your Changes
 
@@ -116,4 +163,4 @@ For any issues or doubts, reach out to the organizing team.
 
 ---
 
-*Organized by Sceptix & GDG*  
+*Organized by Sceptix & GDG SJEC*  
