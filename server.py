@@ -468,9 +468,12 @@ async def scan_dataset(
                                   safe_count=batch_safe_count, 
                                   avg_drift_score=avg_norm)
                                   
-                    # Broadcast stats
+                    # Broadcast stats (Wrapped in type)
                     stats = tracker.get_stats()
-                    asyncio.run_coroutine_threadsafe(manager.broadcast(stats), asyncio.get_event_loop())
+                    asyncio.run_coroutine_threadsafe(manager.broadcast({
+                        "type": "scan_metrics",
+                        "data": stats
+                    }), asyncio.get_event_loop())
                 
                 # Artificial delay for "Mind Blowing" visualization effect 
                 # (Otherwise it finishes too fast to see the cool charts)

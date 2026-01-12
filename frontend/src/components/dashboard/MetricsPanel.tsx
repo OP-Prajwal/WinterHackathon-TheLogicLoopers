@@ -39,15 +39,22 @@ export const MetricsPanel: React.FC = () => {
             };
 
             ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                const point = { ...data, timestamp: Date.now() };
+                try {
+                    const msg = JSON.parse(event.data);
 
-                setCurrent(point);
-                setHistory(prev => {
-                    const newHistory = [...prev, point];
-                    if (newHistory.length > MAX_POINTS) return newHistory.slice(-MAX_POINTS);
-                    return newHistory;
-                });
+                    // Only process scan metrics
+                    if (msg.type === 'scan_metrics' && msg.data) {
+                        const point = { ...msg.data, timestamp: Date.now() };
+                        setCurrent(point);
+                        setHistory(prev => {
+                            const newHistory = [...prev, point];
+                            if (newHistory.length > MAX_POINTS) return newHistory.slice(-MAX_POINTS);
+                            return newHistory;
+                        });
+                    }
+                } catch (e) {
+                    console.error("WS Parse Error", e);
+                }
             };
 
             ws.onclose = () => {
