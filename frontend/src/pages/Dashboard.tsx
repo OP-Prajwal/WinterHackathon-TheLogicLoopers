@@ -4,6 +4,8 @@ import MetricCard from '../components/metrics/MetricCard';
 import EffectiveRankChart from '../components/metrics/EffectiveRankChart';
 import ControlPanel from '../components/dashboard/ControlPanel';
 import EventLog from '../components/dashboard/EventLog';
+import PurificationPanel from '../components/dashboard/PurificationPanel';
+import ManualTest from '../components/dashboard/ManualTest';
 
 const Dashboard: React.FC = () => {
     return (
@@ -75,7 +77,17 @@ const Dashboard: React.FC = () => {
                 <ControlPanel />
                 <EventLog />
             </div>
-        </div>
+
+
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <div className="lg:col-span-1">
+                    <PurificationPanel />
+                </div>
+                <div className="lg:col-span-2">
+                    <ManualTest />
+                </div>
+            </div>
+        </div >
     );
 };
 
