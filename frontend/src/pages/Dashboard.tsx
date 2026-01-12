@@ -5,6 +5,7 @@ import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
 import { EventLog } from '../components/dashboard/EventLog';
 import { ManualTest } from '../components/dashboard/ManualTest';
 import { MonitoringResults } from '../components/dashboard/MonitoringResults';
+import { PurificationPanel } from '../components/dashboard/PurificationPanel';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { DataImport } from '../components/dashboard/DataImport';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
@@ -179,6 +180,5 @@ export const Dashboard: React.FC = () => {
                 </div>
             </div>
         </div>
-        </div >
     );
 };
