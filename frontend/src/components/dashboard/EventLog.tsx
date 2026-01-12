@@ -16,7 +16,7 @@ export const EventLog: React.FC<EventLogProps> = ({ events }) => {
                 <h3 className="text-lg font-bold text-gray-200">Security Event Log</h3>
             </div>
 
-            <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-dark-700 min-h-[200px]">
+            <div className="flex-1 overflow-y-auto pr-2 max-h-[300px]" style={{ scrollbarWidth: 'thin', scrollbarColor: '#374151 #1f2937' }}>
                 <AnimatePresence mode='popLayout'>
                     {events.length > 0 ? (
                         events.slice().reverse().map((event, index) => (
