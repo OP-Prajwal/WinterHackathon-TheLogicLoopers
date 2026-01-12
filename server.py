@@ -32,7 +32,7 @@ from poison_guard.models.encoders.tabular_mlp import TabularMLPEncoder
 from poison_guard.models.heads.mlp import ProjectionHead
 from poison_guard.db import connect_to_mongo, close_mongo_connection, get_database
 from poison_guard.auth import get_password_hash, verify_password, create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 app = FastAPI(title="Poison Guard API", version="0.1.0")
 

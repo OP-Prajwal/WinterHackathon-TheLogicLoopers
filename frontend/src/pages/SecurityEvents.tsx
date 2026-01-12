@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { API_BASE } from '../services/api';
 
 interface ScanRecord {
     _id: string;
@@ -22,13 +23,18 @@ export function SecurityEvents() {
     const fetchScans = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch('http://localhost:8000/api/scans', {
-                headers: { Authorization: `Bearer ${token}` },
+            const response = await fetch(`${API_BASE}/api/scans`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
             });
             if (response.ok) {
                 const data = await response.json();
                 // Reverse to show oldest to newest in chart
                 setScans(data);
+            } else {
+                console.error("Failed to fetch scans:", response.statusText);
             }
         } catch (error) {
             console.error('Failed to fetch scans', error);
