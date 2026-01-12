@@ -568,14 +568,79 @@ import shutil
 TEMP_SCAN_DIR = os.path.join(os.getcwd(), "temp_scans")
 os.makedirs(TEMP_SCAN_DIR, exist_ok=True)
 
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+
+# --- GridFS Helpers ---
+async def upload_bytes_to_gridfs(filename: str, content: bytes, metadata: dict = None) -> str:
+    db = get_database()
+    fs = AsyncIOMotorGridFSBucket(db)
+    grid_in = fs.open_upload_stream(filename, metadata=metadata)
+    await grid_in.write(content)
+    await grid_in.close()
+    return str(grid_in._id)
+
+async def download_bytes_from_gridfs(file_id: str = None, filename: str = None) -> bytes:
+    db = get_database()
+    fs = AsyncIOMotorGridFSBucket(db)
+    buffer = io.BytesIO()
+    
+    if file_id:
+        from bson import ObjectId
+        await fs.download_to_stream(ObjectId(file_id), buffer)
+    elif filename:
+        await fs.download_to_stream_by_name(filename, buffer)
+    else:
+        raise ValueError("Must provide file_id or filename")
+        
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# Helper to save DF to Bytes directly (No local file)
+def dataframe_to_bytes(df: pd.DataFrame, format: str = "csv") -> bytes:
+    buffer = io.BytesIO()
+    if format == "csv":
+        df.to_csv(buffer, index=False)
+    elif format == "json":
+        df.to_json(buffer, orient="records", indent=2)
+    elif format == "xlsx":
+        df.to_excel(buffer, index=False)
+    elif format == "parquet":
+        df.to_parquet(buffer, index=False)
+    return buffer.getvalue()
+
 @app.post("/api/dataset/scan")
 async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     print(f"!!! RECEIVING REQUEST: {file.filename} from {current_user['username']} !!!", flush=True)
     try:
-        # Load data using multi-format handler from feat/multi-format-io
-        df = await load_dataset_multi_format(file)
+        # 1. Read content into memory (Hackathon scale: OK. Production: Stream directly)
+        file_content = await file.read()
         
-        # Preprocess logic (existing logic preserved)
+        # 2. Store ORIGINAL file in GridFS immediately
+        original_file_id = await upload_bytes_to_gridfs(
+            file.filename, 
+            file_content, 
+            metadata={"uploaded_by": current_user['username'], "type": "original_dataset"}
+        )
+        
+        # 3. Load DataFrame from bytes
+        # Re-wrap bytes for pandas
+        buffer = io.BytesIO(file_content)
+        # We need to manually handle formats since our helper took UploadFile before
+        # Let's reuse the logic but adapt it or just inline simple simplified logic
+        filename = file.filename.lower()
+        if filename.endswith('.csv'):
+            df = pd.read_csv(buffer)
+        elif filename.endswith('.json'):
+            df = pd.read_json(buffer)
+        elif filename.endswith('.parquet'):
+            df = pd.read_parquet(buffer)
+        elif filename.endswith('.xlsx'):
+             df = pd.read_excel(buffer)
+        else:
+             buffer.seek(0)
+             df = pd.read_csv(buffer)
+
+        # Preprocess logic (existing)
         if 'Diabetes_binary' in df.columns:
             X = df.drop('Diabetes_binary', axis=1).values
         else:
@@ -589,27 +654,18 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
                 padding = np.zeros((X.shape[0], INPUT_DIM - X.shape[1]))
                 X = np.hstack([X, padding])
         
-        # Scale using fixed reference stats (from HEAD)
-        ref_means = np.array([0.5]*INPUT_DIM)
-        ref_means[3] = 28.0 # BMI 
-        ref_means[14] = 3.0 # MentHlth
-        
-        ref_stds = np.array([0.5]*INPUT_DIM)
-        ref_stds[3] = 6.0 
-        ref_stds[14] = 5.0 
-        
+        # Scale
+        ref_means = np.array([0.5]*INPUT_DIM); ref_means[3] = 28.0; ref_means[14] = 3.0
+        ref_stds = np.array([0.5]*INPUT_DIM); ref_stds[3] = 6.0; ref_stds[14] = 5.0
         X_scaled = (X - ref_means) / (ref_stds + 1e-6)
         X_tensor = torch.FloatTensor(X_scaled)
         
         # Run Model
         poison_count = 0
         safe_count = 0
-        
-        # Batch inference
         batch_size = 256
-        dataset_status = [] # List of strings: "SAFE" or "POISON"
+        dataset_status = []
         
-        # Use dynamic sensitivity from DB/State
         dynamic_threshold = 150.0 * state.get("sensitivity", 1.0)
         
         with torch.no_grad():
@@ -618,30 +674,19 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
                 embeddings = encoder(batch)
                 norms = torch.norm(embeddings, dim=1)
                 
-                # Check anomaly again 
                 is_poison_batch = (norms > dynamic_threshold).bool().tolist()
                 
-                # Calculate batch metrics
-                batch_poison_count = is_poison_batch.count(True)
-                batch_safe_count = batch_size - batch_poison_count
-                
-                # Calculate simple "Drift Score" (e.g., avg norm of batch)
-                avg_norm = norms.mean().item()
-                
-                # Broadcast stats IF monitoring is active, or just for fun?
-                # Maybe only if 'training' is True? Or always?
-                # Let's broadcast "scan_progress"
+                # UI Broadcast
                 if len(manager.active_connections) > 0:
                      asyncio.create_task(manager.broadcast({
                         "type": "scan_progress",
                         "data": {
                             "processed": i + len(batch),
                             "total": len(X_tensor),
-                            "poison_found": poison_count + batch_poison_count
+                             "poison_found": poison_count + is_poison_batch.count(True)
                         }
                     }))
                 
-                # Artificial delay for UI effect
                 await asyncio.sleep(0.01)
 
                 for is_p in is_poison_batch:
@@ -652,107 +697,108 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
                         safe_count += 1
                         dataset_status.append("SAFE")
 
-        # Create poison and safe DataFrames
+        # Create DataFrames
         df['_status'] = dataset_status[:len(df)]
         
         poison_df = df[df['_status'] == 'POISON'].drop(columns=['_status'])
         safe_df = df[df['_status'] == 'SAFE'].drop(columns=['_status'])
         
-        # Save to files (Local Storage for download)
         import uuid
         scan_id = str(uuid.uuid4())[:8]
+        
+        # 4. Save RESULTS to GridFS (No local files!)
+        poison_bytes = dataframe_to_bytes(poison_df, "csv")
+        safe_bytes = dataframe_to_bytes(safe_df, "csv")
+        
         poison_filename = f"poison_{scan_id}.csv"
         safe_filename = f"safe_{scan_id}.csv"
         
-        os.makedirs("downloads", exist_ok=True)
-        poison_path = os.path.join("downloads", poison_filename)
-        safe_path = os.path.join("downloads", safe_filename)
+        poison_file_id = await upload_bytes_to_gridfs(poison_filename, poison_bytes, metadata={"scan_id": scan_id, "type": "result_poison"})
+        safe_file_id = await upload_bytes_to_gridfs(safe_filename, safe_bytes, metadata={"scan_id": scan_id, "type": "result_safe"})
         
-        poison_df.to_csv(poison_path, index=False)
-        safe_df.to_csv(safe_path, index=False)
+        # Also save Parquet backups to DB ? 
+        # User said "store those only in the database".
+        # Let's save parquet versions too just in case we need efficient export later
+        safe_pq_bytes = dataframe_to_bytes(safe_df, "parquet")
+        await upload_bytes_to_gridfs(f"{scan_id}_safe.parquet", safe_pq_bytes, metadata={"scan_id": scan_id, "type": "backup_safe"})
         
-        # Also save Parquet backups 
-        os.makedirs(TEMP_SCAN_DIR, exist_ok=True)
-        safe_df.to_parquet(os.path.join(TEMP_SCAN_DIR, f"{scan_id}_safe.parquet"), index=False)
-        poison_df.to_parquet(os.path.join(TEMP_SCAN_DIR, f"{scan_id}_poison.parquet"), index=False)
-
-        # --- MongoDB Storage --- 
+        # --- MongoDB Scan Record ---
         scan_record = {
             "scan_id": scan_id,
             "filename": file.filename,
+            "original_file_id": original_file_id,
             "uploaded_by": current_user['username'],
             "timestamp": datetime.utcnow(),
             "total_rows": len(df),
             "poison_count": poison_count,
             "safe_count": safe_count,
-            "poison_file_path": poison_path,
-            "safe_file_path": safe_path,
+            "poison_file_id": poison_file_id,
+            "safe_file_id": safe_file_id,
             "sensitivity_used": state.get("sensitivity", 1.0)
         }
         
         db = get_database()
         await db.scans.insert_one(scan_record)
-        print(f"DEBUG: Saved scan record {scan_id} to MongoDB", flush=True)
+        print(f"DEBUG: Saved scan record {scan_id} to MongoDB (GridFS backed)", flush=True)
 
         return {
             "scan_id": scan_id,
             "total_rows": len(df),
             "poison_count": poison_count,
             "safe_count": safe_count,
-            "poison_file": f"/api/downloads/{poison_filename}",
+            "poison_file": f"/api/downloads/{poison_filename}", # Keep URL structure but serve from DB
             "safe_file": f"/api/downloads/{safe_filename}",
-            "message": "Scan completed and logged to database."
+            "message": "Scan completed. Files stored securely in Database."
         }
     except Exception as e:
         print(f"Error scanning dataset: {e}")
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
-@app.websocket("/ws/metrics")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+@app.get("/api/downloads/{filename}")
+async def download_file(filename: str):
+    """Serve files from GridFS"""
     try:
-        while True:
-            # Keep alive / or handle client messages if needed
-            # For now just wait
-            await websocket.receive_text() 
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
+        # Try to find file by filename in GridFS
+        content = await download_bytes_from_gridfs(filename=filename)
+        from fastapi.responses import Response
+        return Response(content=content, media_type="application/octet-stream", headers={"Content-Disposition": f"attachment; filename={filename}"})
+    except Exception as e:
+        # Fallback to local for backward compatibility? NO, User said "only in database"
+        return {"error": "File not found in database"}
 
 @app.get("/api/dataset/export")
 async def export_dataset(scan_id: str, type: str, format: str):
     """
-    Export specific dataset (safe/poison) in requested format.
+    Export specific dataset (safe/poison) from GridFS in requested format.
     """
     if type not in ['safe', 'poison']:
         raise HTTPException(status_code=400, detail="Invalid type. Use 'safe' or 'poison'.")
         
-    source_path = os.path.join(TEMP_SCAN_DIR, f"{scan_id}_{type}.parquet")
+    filename = f"{scan_id}_{type}.parquet"
     
-    if not os.path.exists(source_path):
-        raise HTTPException(status_code=404, detail="Scan data not found or expired.")
-        
     try:
-        # Load
-        df = pd.read_parquet(source_path)
+        # Load Parquet buffer from GridFS
+        content = await download_bytes_from_gridfs(filename=filename)
+        buffer = io.BytesIO(content)
+        df = pd.read_parquet(buffer)
         
-        # Use helper to save to format
-        base_name = f"logicloopers_{type}_{scan_id[:8]}"
+        # Convert to requested format
+        out_bytes = dataframe_to_bytes(df, format)
         
-        # Note: save_dataframe_multi_format puts things in 'downloads'
-        file_path, url = save_dataframe_multi_format(df, base_name, format)
-        
-        filename = os.path.basename(file_path)
-        
-        return FileResponse(
-            path=file_path,
-            filename=filename,
-            media_type='application/octet-stream' 
+        from fastapi.responses import Response
+        out_filename = f"logicloopers_{type}_{scan_id[:8]}.{format}"
+        if format == 'excel': out_filename = out_filename.replace('.excel', '.xlsx')
+            
+        return Response(
+            content=out_bytes, 
+            media_type='application/octet-stream',
+            headers={"Content-Disposition": f"attachment; filename={out_filename}"}
         )
         
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        print(f"Export failed: {e}")
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 @app.get("/api/scans")
