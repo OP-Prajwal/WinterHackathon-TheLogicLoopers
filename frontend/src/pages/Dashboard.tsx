@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { usePoisonGuardSocket, type MetricsData } from '../services/websocket';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
 import { EventLog } from '../components/dashboard/EventLog';
 import { DataImport } from '../components/dashboard/DataImport';
 import { ModelSelector } from '../components/dashboard/ModelSelector';
+import { ScanResultPanel } from '../components/dashboard/ScanResultPanel';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
 import { NeuralSentinel } from '../components/dashboard/NeuralSentinel';
 import { SecurityAdvisor } from '../components/dashboard/SecurityAdvisor';
@@ -74,6 +75,8 @@ export const Dashboard: React.FC = () => {
                 </div>
             </div>
 
+
+
             {/* Header / Controls */}
             {loadedData && (
                 <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-sm">
@@ -136,6 +139,14 @@ export const Dashboard: React.FC = () => {
                 />
             </div>
 
+            {/* Post-Prediction Result Panel - Conditionally Rendered */}
+            <AnimatePresence>
+                {result && (
+                    <div className="w-full">
+                        <ScanResultPanel result={result} onClear={clearResult} />
+                    </div>
+                )}
+            </AnimatePresence>
 
             <HolographicOverlay active={(metrics?.drift_score ?? 0) > 0.9} />
 
