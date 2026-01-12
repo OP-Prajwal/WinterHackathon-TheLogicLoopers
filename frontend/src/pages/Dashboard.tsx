@@ -153,9 +153,11 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {/* Bottom Row: Operations Tools */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <ManualTest />
-                <PurificationPanel />
+            <div className="flex flex-col gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <ManualTest />
+                    <PurificationPanel />
+                </div>
             </div>
         </div>
     );

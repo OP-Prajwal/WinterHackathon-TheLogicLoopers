@@ -30,9 +30,34 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 # Import model components
 from poison_guard.models.encoders.tabular_mlp import TabularMLPEncoder
 from poison_guard.models.heads.mlp import ProjectionHead
+<<<<<<< HEAD
 from poison_guard.db import connect_to_mongo, close_mongo_connection, get_database
 from poison_guard.auth import get_password_hash, verify_password, create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
 from datetime import timedelta
+=======
+from metrics import MetricTracker
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except:
+                pass
+
+manager = ConnectionManager()
+tracker = MetricTracker()
+>>>>>>> origin/rtmetrics
 
 app = FastAPI(title="Poison Guard API", version="0.1.0")
 
@@ -368,29 +393,85 @@ async def login(user: UserCreate):
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/api/users/me")
-async def read_users_me(current_user: dict = Depends(get_current_user)):
-    return current_user
-@app.get("/api/health")
-def health_check():
-    return {"status": "ok", "service": "poison-guard-backend"}
+@app.get("/api/metrics")
+async def get_metrics():
+    """Get real-time system metrics - Updated for FE chart compatibility"""
+    # Return 24h of data points for the 'Protection Level' chart
+    # just dummy data for now to match the shape expected by Recharts if needed
+    # Or just simple scalar metrics as before?
+    # The FE expects: { label, value, change, trend }
+    
+    return [
+        {
+            "label": "Total Scans",
+            "value": "12,450", 
+            "change": "+12%",
+            "trend": "up"
+        },
+        {
+            "label": "Protection Level",
+            "value": "98.2%",
+            "change": "+0.4%", 
+            "trend": "up"
+        },
+        {
+            "label": "Active Threads",
+            "value": "24",
+            "change": "Stable",
+            "trend": "neutral"
+        },
+        {
+             "label": "Response Time",
+             "value": "45ms",
+             "change": "-12ms",
+             "trend": "down" # down is good for latency
+        }
+    ]
 
-@app.get("/api/downloads/{filename}")
-def download_file(filename: str):
-    """Serve CSV files from downloads directory"""
-    file_path = os.path.join("downloads", filename)
-    if os.path.exists(file_path):
-        return FileResponse(
-            path=file_path,
-            filename=filename,
-            media_type="text/csv"
-        )
-    return {"error": "File not found"}
+# --- Settings Endpoints ---
+# --- Settings Persistence ---
+async def get_settings_from_db():
+    db = get_database()
+    settings = await db.settings.find_one({"_id": "global_config"})
+    if not settings:
+        # Defaults
+        settings = {
+            "_id": "global_config",
+            "strict_mode": True,
+            "sensitivity": 1.0,
+            "speed": 1.0,
+            "halted": False,
+            "status": "IDLE"
+        }
+        await db.settings.insert_one(settings)
+    
+    # Update global state
+    state["strict_mode"] = settings.get("strict_mode", True)
+    state["sensitivity"] = settings.get("sensitivity", 1.0)
+    state["speed"] = settings.get("speed", 1.0)
+    # state["halted"] = settings.get("halted", False) # Don't persist halted state across restarts usually? Let's say yes.
+    # state["status"] = "IDLE" # Always idle on restart
+    return settings
+
+async def update_setting_db(key: str, value):
+    db = get_database()
+    await db.settings.update_one(
+        {"_id": "global_config"},
+        {"$set": {key: value}},
+        upsert=True
+    )
+
+@app.on_event("startup")
+async def startup_event():
+    await connect_to_mongo()
+    await get_settings_from_db()
+    print("Locked & Loaded: Settings synced from DB.", flush=True)
 
 # --- Settings Endpoints ---
 @app.get("/api/settings")
-def get_settings():
+async def get_settings():
     """Get current system settings"""
+    # Refresh from DB? Or trust state? Trust state for speed, but startup verified.
     return {
         "strict_mode": state["strict_mode"],
         "halted": state["halted"],
@@ -400,31 +481,37 @@ def get_settings():
     }
 
 @app.post("/api/settings/speed")
-def set_speed(value: float):
+async def set_speed(value: float):
     """Set simulation delay in seconds (0.1 to 5.0)"""
-    state["speed"] = max(0.05, min(5.0, value))
+    new_val = max(0.05, min(5.0, value))
+    state["speed"] = new_val
+    await update_setting_db("speed", new_val)
     print(f"[SETTINGS] Speed set to: {state['speed']}s delay", flush=True)
     return {"speed": state["speed"]}
 
 @app.post("/api/settings/sensitivity")
-def set_sensitivity(value: float):
+async def set_sensitivity(value: float):
     """Set detection sensitivity (0.1 to 3.0)"""
-    state["sensitivity"] = max(0.1, min(3.0, value))
+    new_val = max(0.1, min(3.0, value))
+    state["sensitivity"] = new_val
+    await update_setting_db("sensitivity", new_val)
     print(f"[SETTINGS] Sensitivity set to: {state['sensitivity']}", flush=True)
     return {"sensitivity": state["sensitivity"]}
 
 @app.post("/api/settings/strict-mode")
-def set_strict_mode(enabled: bool = True):
+async def set_strict_mode(enabled: bool = True):
     """Toggle strict mode on/off"""
     state["strict_mode"] = enabled
+    await update_setting_db("strict_mode", enabled)
     print(f"[SETTINGS] Strict Mode set to: {enabled}", flush=True)
     return {"strict_mode": state["strict_mode"]}
 
 @app.post("/api/settings/reset-halt")
-def reset_halt():
+async def reset_halt():
     """Reset system from halted state"""
     state["halted"] = False
     state["status"] = "IDLE"
+    await update_setting_db("halted", False)
     print("[SETTINGS] System HALT reset", flush=True)
     return {"halted": False, "status": "IDLE"}
 
@@ -446,9 +533,43 @@ async def stop_training():
 @app.post("/api/training/inject")
 async def inject_poison():
     state["poisoned"] = not state["poisoned"]
+    # Log injection event?
+    if state["poisoned"]:
+        # Log to DB
+        db = get_database()
+        await db.system_events.insert_one({
+            "type": "ATTACK_SIMULATION",
+            "message": "Poison injection manually toggled ON",
+            "timestamp": datetime.utcnow()
+        })
     return {"status": "toggled", "poisoned": state["poisoned"]}
 
+@app.get("/api/effective-rank")
+def get_effective_rank() -> List[Dict]:
+    """Return recent effective rank history"""
+    # Assuming 'tracker' is global or accessible
+    if 'tracker' in globals():
+        return tracker.history[-20:] # Return last 20 points
+    return []
 
+@app.get("/api/users/me")
+async def read_users_me(current_user: dict = Depends(get_current_user)):
+    return current_user
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "service": "poison-guard-backend"}
+
+@app.get("/api/downloads/{filename}")
+def download_file(filename: str):
+    """Serve CSV files from downloads directory"""
+    file_path = os.path.join("downloads", filename)
+    if os.path.exists(file_path):
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type="text/csv"
+        )
+    return {"error": "File not found"}
 
 # --- Data Handler Helper Functions ---
 async def load_dataset_multi_format(file: UploadFile) -> pd.DataFrame:
@@ -564,6 +685,31 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
                 threshold = 150.0 
                 is_poison_batch = (norms > threshold).bool().tolist()
                 
+                # Calculate batch metrics
+                batch_poison_count = is_poison_batch.count(True)
+                batch_safe_count = batch_size - batch_poison_count
+                
+                # Calculate simple "Drift Score" (e.g., avg norm of batch)
+                avg_norm = norms.mean().item()
+                
+                # Verify tracker existence just in case, though global
+                if 'tracker' in globals():
+                    tracker.update(batch_size=len(batch), 
+                                  poison_count=batch_poison_count, 
+                                  safe_count=batch_safe_count, 
+                                  avg_drift_score=avg_norm)
+                                  
+                    # Broadcast stats (Wrapped in type)
+                    stats = tracker.get_stats()
+                    asyncio.run_coroutine_threadsafe(manager.broadcast({
+                        "type": "scan_metrics",
+                        "data": stats
+                    }), asyncio.get_event_loop())
+                
+                # Artificial delay for "Mind Blowing" visualization effect 
+                # (Otherwise it finishes too fast to see the cool charts)
+                await asyncio.sleep(0.05)
+
                 for is_p in is_poison_batch:
                     if is_p:
                         poison_count += 1
@@ -625,6 +771,18 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
     except Exception as e:
         print(f"Error scanning dataset: {e}")
         return {"error": str(e)}
+
+@app.websocket("/ws/metrics")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep alive / or handle client messages if needed
+            # For now just wait
+            await websocket.receive_text() 
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 
 @app.get("/api/dataset/export")
 async def export_dataset(scan_id: str, type: str, format: str):
