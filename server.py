@@ -157,6 +157,13 @@ state = {
     "speed": 1.0           # Simulation Speed (delay in seconds)
 }
 
+# --- Streaming Data Storage (for user-uploaded files) ---
+streaming_data = {
+    "tensor": None,        # User uploaded data as tensor
+    "filename": None,      # Original filename
+    "total_rows": 0        # Number of rows in uploaded file
+}
+
 # --- WebSocket Manager ---
 class ConnectionManager:
     def __init__(self):
@@ -180,21 +187,41 @@ manager = ConnectionManager()
 
 # --- Monitoring/Prediction Loop ---
 async def monitoring_loop():
-    global state
-    batch_size = 64
-    total_samples = len(X_test_tensor)
+    global state, streaming_data
+    batch_size = 10  # Process 10 rows at a time
+    
+    # Use uploaded data if available, otherwise use pre-loaded data
+    if streaming_data["tensor"] is not None:
+        data_tensor = streaming_data["tensor"]
+        data_source = streaming_data["filename"]
+        print(f"[STREAM] Using uploaded file: {data_source}", flush=True)
+    else:
+        data_tensor = X_test_tensor
+        data_source = "diabetes_brfss.csv (default)"
+        print(f"[STREAM] Using default data: {data_source}", flush=True)
+    
+    total_samples = len(data_tensor)
     idx = 0
     
     while state["training"]:
         state["batch"] += 1
         
-        # Get Batch from Real Data
+        # Get Batch of 10 rows from Data
         next_idx = min(idx + batch_size, total_samples)
-        batch_data = X_test_tensor[idx:next_idx]
+        batch_data = data_tensor[idx:next_idx]
         
-        if len(batch_data) < batch_size:
-            idx = 0
-            batch_data = X_test_tensor[0:batch_size] # Loop around
+        # If we've reached the end, loop back to start (continuous simulation)
+        if len(batch_data) < batch_size or next_idx >= total_samples:
+            idx = 0  # Reset to beginning for continuous loop
+            await manager.broadcast({
+                "type": "event",
+                "data": {
+                    "severity": "info",
+                    "message": f"📊 Completed cycle of {total_samples} rows, restarting...",
+                    "batch": state['batch']
+                }
+            })
+            continue
         else:
             idx = next_idx
 
@@ -436,6 +463,58 @@ async def start_training():
         state["status"] = "MONITORING"
         asyncio.create_task(monitoring_loop())
     return {"status": "started", "state": state}
+
+@app.post("/api/stream/upload")
+async def upload_streaming_data(file: UploadFile = File(...)):
+    print(f"[STREAM] Receiving file for streaming: {file.filename}", flush=True)
+    try:
+        # Load and process data (using consistent logic with scan_dataset)
+        df = await load_dataset_multi_format(file)
+        
+        if 'Diabetes_binary' in df.columns:
+            X = df.drop('Diabetes_binary', axis=1).values
+        else:
+            X = df.values
+            
+        # Ensure input dim
+        if X.shape[1] != INPUT_DIM:
+            if X.shape[1] > INPUT_DIM:
+                X = X[:, :INPUT_DIM]
+            else:
+                padding = np.zeros((X.shape[0], INPUT_DIM - X.shape[1]))
+                X = np.hstack([X, padding])
+        
+        # Scale
+        ref_means = np.array([0.5]*INPUT_DIM)
+        ref_means[3] = 28.0 # BMI 
+        ref_means[14] = 3.0 # MentHlth
+        
+        ref_stds = np.array([0.5]*INPUT_DIM)
+        ref_stds[3] = 6.0 
+        ref_stds[14] = 5.0 
+        
+        X_scaled = (X - ref_means) / (ref_stds + 1e-6)
+        X_tensor = torch.FloatTensor(X_scaled)
+        
+        # update global state
+        streaming_data["tensor"] = X_tensor
+        streaming_data["filename"] = file.filename
+        streaming_data["total_rows"] = len(X_tensor)
+        
+        # Reset streaming state
+        state["training"] = False
+        state["batch"] = 0
+        state["status"] = "IDLE"
+        
+        print(f"[STREAM] Loaded {len(X_tensor)} rows from {file.filename}", flush=True)
+        return {
+            "status": "loaded", 
+            "filename": file.filename,
+            "rows": len(X_tensor)
+        }
+    except Exception as e:
+        print(f"[STREAM] Error loading file: {e}", flush=True)
+        return {"error": str(e)}
 
 @app.post("/api/training/stop")
 async def stop_training():
