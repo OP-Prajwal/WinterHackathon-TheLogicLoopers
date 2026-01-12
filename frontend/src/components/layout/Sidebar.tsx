@@ -6,7 +6,7 @@ import clsx from 'clsx';
 
 const navItems = [
     { icon: LayoutDashboard, label: 'Overview', path: '/' },
-    { icon: Activity, label: 'Real-time Metrics', path: '/metrics' },
+    { icon: Activity, label: 'Personal Zone', path: '/metrics' },
     { icon: ShieldAlert, label: 'Security Events', path: '/events' },
     { icon: Settings, label: 'Settings', path: '/settings' },
 ];

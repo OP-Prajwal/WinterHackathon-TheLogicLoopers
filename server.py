@@ -56,7 +56,19 @@ class ConnectionManager:
 manager = ConnectionManager()
 tracker = MetricTracker()
 
-app = FastAPI(title="Poison Guard API", version="0.1.0")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await connect_to_mongo()
+    await get_settings_from_db()
+    print("Locked & Loaded: Settings synced from DB.", flush=True)
+    yield
+    # Shutdown
+    await close_mongo_connection()
+
+app = FastAPI(title="Poison Guard API", version="0.1.0", lifespan=lifespan)
 
 # Enable CORS
 app.add_middleware(
@@ -66,14 +78,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-async def startup_db_client():
-    await connect_to_mongo()
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    await close_mongo_connection()
 
 # --- Configuration & Model Loading ---
 MODEL_PATH = "trained_model_v2.pt"
@@ -199,6 +203,41 @@ class ConnectionManager:
                 pass
 
 manager = ConnectionManager()
+
+# --- Personal Training Manager ---
+class TrainingSession:
+    def __init__(self, username: str, total_epochs: int = 20):
+        self.username = username
+        self.total_epochs = total_epochs
+        self.current_epoch = 0
+        self.loss_history = []
+        self.accuracy_history = []
+        self.is_active = False
+        self.task = None
+
+# Store active sessions: username -> TrainingSession
+active_training_sessions: Dict[str, TrainingSession] = {}
+
+# Store connected personal websockets: username -> WebSocket
+personal_ws_connections: Dict[str, WebSocket] = {}
+
+class PersonalTrainingManager:
+    async def connect(self, websocket: WebSocket, username: str):
+        await websocket.accept()
+        personal_ws_connections[username] = websocket
+        
+    def disconnect(self, username: str):
+        if username in personal_ws_connections:
+            del personal_ws_connections[username]
+            
+    async def send_to_user(self, username: str, message: dict):
+        if username in personal_ws_connections:
+            try:
+                await personal_ws_connections[username].send_json(message)
+            except:
+                pass
+
+personal_manager = PersonalTrainingManager()
 
 # --- Monitoring/Prediction Loop ---
 async def monitoring_loop():
@@ -457,12 +496,6 @@ async def update_setting_db(key: str, value):
         upsert=True
     )
 
-@app.on_event("startup")
-async def startup_event():
-    await connect_to_mongo()
-    await get_settings_from_db()
-    print("Locked & Loaded: Settings synced from DB.", flush=True)
-
 # --- Settings Endpoints ---
 @app.get("/api/settings")
 async def get_settings():
@@ -669,6 +702,137 @@ def dataframe_to_bytes(df: pd.DataFrame, format: str = "csv") -> bytes:
     elif format == "parquet":
         df.to_parquet(buffer, index=False)
     return buffer.getvalue()
+
+# --- Personal Training Components ---
+
+async def run_personal_training_loop(username: str):
+    session = active_training_sessions.get(username)
+    if not session:
+        return
+
+    print(f"Starting personal training for {username}")
+    session.is_active = True
+    
+    # Send "started" event
+    await personal_manager.send_to_user(username, {
+        "type": "status",
+        "data": {"status": "TRAINING", "epoch": 0, "total_epochs": session.total_epochs}
+    })
+
+    # Artificial Training Simulation
+    # In a real app, this would use the user's uploaded dataset from GridFS
+    loss = 2.5
+    accuracy = 0.45
+    
+    for epoch in range(1, session.total_epochs + 1):
+        if not session.is_active:
+            break
+            
+        session.current_epoch = epoch
+        
+        # Simulate improvement
+        loss = max(0.1, loss * 0.9 + random.uniform(-0.05, 0.05))
+        accuracy = min(0.99, accuracy * 1.05 + random.uniform(-0.01, 0.02))
+        
+        session.loss_history.append(loss)
+        session.accuracy_history.append(accuracy)
+        
+        # Broadcast metrics for Animation
+        await personal_manager.send_to_user(username, {
+            "type": "metrics",
+            "data": {
+                "epoch": epoch,
+                "loss": loss,
+                "accuracy": accuracy,
+                "progress": (epoch / session.total_epochs) * 100
+            }
+        })
+        
+        # Simulate batch processing time
+        await asyncio.sleep(0.5) 
+    
+    # Finish
+    session.is_active = False
+    
+    # Save "Model" to GridFS (Simulated)
+    # Create a dummy model file
+    dummy_model_content = f"Model for {username} - Accuracy: {accuracy:.2f}".encode()
+    model_filename = f"model_{username}_{int(datetime.utcnow().timestamp())}.pt"
+    
+    await upload_bytes_to_gridfs(
+        model_filename, 
+        dummy_model_content, 
+        metadata={"owner": username, "type": "trained_model", "accuracy": accuracy}
+    )
+    
+    await personal_manager.send_to_user(username, {
+        "type": "complete",
+        "data": {
+            "final_accuracy": accuracy,
+            "model_file": f"/api/downloads/{model_filename}",
+            "message": "Training Complete! Model saved to Vault."
+        }
+    })
+    print(f"Finished personal training for {username}")
+
+
+@app.post("/api/training/personal/upload")
+async def upload_personal_dataset(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    username = current_user['username']
+    content = await file.read()
+    
+    # Save to GridFS with Owner Metadata
+    file_id = await upload_bytes_to_gridfs(
+        file.filename,
+        content,
+        metadata={"owner": username, "type": "training_data"}
+    )
+    
+    return {"message": "Dataset uploaded successfully", "file_id": file_id, "filename": file.filename}
+
+@app.websocket("/ws/training/personal")
+async def personal_training_websocket(websocket: WebSocket, token: str):
+    # Authenticate via Token in Query Param
+    try:
+        # For simplicity, decode manually here
+        from jose import jwt, JWTError
+        from poison_guard.auth import SECRET_KEY, ALGORITHM
+        
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+            
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await personal_manager.connect(websocket, username)
+    
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            if message.get("action") == "start":
+                # Initialize session if not exists or exists (overwrite)
+                session = TrainingSession(username, total_epochs=20)
+                active_training_sessions[username] = session
+                
+                # Run loop in background
+                session.task = asyncio.create_task(run_personal_training_loop(username))
+                
+            elif message.get("action") == "stop":
+                session = active_training_sessions.get(username)
+                if session:
+                    session.is_active = False # Loop will break
+                    
+    except WebSocketDisconnect:
+        personal_manager.disconnect(username)
+        session = active_training_sessions.get(username)
+        if session:
+            session.is_active = False
 
 @app.post("/api/dataset/scan")
 async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
