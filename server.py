@@ -1,5 +1,9 @@
 import sys
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 import uvicorn
 import asyncio
@@ -10,7 +14,7 @@ import torch.nn as nn
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException, Depends, status
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -23,6 +27,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 # Import model components
 from poison_guard.models.encoders.tabular_mlp import TabularMLPEncoder
 from poison_guard.models.heads.mlp import ProjectionHead
+from poison_guard.db import connect_to_mongo, close_mongo_connection, get_database
+from poison_guard.auth import get_password_hash, verify_password, create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
+from datetime import timedelta
 
 app = FastAPI(title="Poison Guard API", version="0.1.0")
 
@@ -34,6 +41,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_db_client():
+    await connect_to_mongo()
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    await close_mongo_connection()
 
 # --- Configuration & Model Loading ---
 MODEL_PATH = "trained_model_v2.pt"
@@ -115,6 +130,16 @@ class TrainingStatus(BaseModel):
     
 class CheckRequest(BaseModel):
     text: str
+
+
+# --- Auth Models ---
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
 # --- Global State ---
 # "training" flag here now means "monitoring active"
@@ -264,6 +289,44 @@ async def monitoring_loop():
         await asyncio.sleep(0.5)
 
 # --- API Endpoints ---
+@app.post("/api/auth/register", response_model=Token)
+async def register(user: UserCreate):
+    db = get_database()
+    # Check if user exists
+    existing_user = await db.users.find_one({"username": user.username})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    hashed_password = get_password_hash(user.password)
+    user_dict = {"username": user.username, "hashed_password": hashed_password}
+    await db.users.insert_one(user_dict)
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/api/auth/login", response_model=Token)
+async def login(user: UserCreate):
+    db = get_database()
+    db_user = await db.users.find_one({"username": user.username})
+    if not db_user or not verify_password(user.password, db_user["hashed_password"]):
+         raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/api/users/me")
+async def read_users_me(current_user: dict = Depends(get_current_user)):
+    return current_user
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "service": "poison-guard-backend"}
@@ -307,8 +370,8 @@ def reset_halt():
 
 
 @app.post("/api/dataset/scan")
-async def scan_dataset(file: UploadFile = File(...)):
-    print(f"!!! RECEIVING REQUEST: {file.filename} !!!", flush=True)
+async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    print(f"!!! RECEIVING REQUEST: {file.filename} from {current_user['username']} !!!", flush=True)
     try:
         contents = await file.read()
         import io
@@ -329,38 +392,18 @@ async def scan_dataset(file: UploadFile = File(...)):
                 padding = np.zeros((X.shape[0], INPUT_DIM - X.shape[1]))
                 X = np.hstack([X, padding])
         
-        # Scale using fixed reference stats to preserve anomalies (don't fit on the batch!)
-        # Approximate stats from BRFSS (safe ranges)
-        # We assume 21 columns
-        # BMI is col index ? strictly we dropped Diabetes_binary.
-        # columns = ["HighBP", "HighChol", "CholCheck", "BMI", ...]
-        # For demo, simple global mean/std or per-column approximations
-        
-        # Hardcoded approximate means/stds for demo robustness
-        # This ensures 100 BMI looks like (100-28)/6 = 12 sigma (HUGE) -> Poison
-        
-        # Create a dummy scaler with fixed params if we wanted, or just manual:
-        # Let's assume standard normalization for most, but keep outliers OUT.
-        
-        # We'll use a robust scaling strategy:
-        # If value > reasonable_max or < reasonable_min, it contributes to poison score.
-        
-        ref_means = np.array([0.5]*INPUT_DIM) # Dummy binary means
-        ref_means[3] = 28.0 # BMI (approx index 3 if HighBP, HighChol, CholCheck start)
+        # Scale using fixed reference stats
+        ref_means = np.array([0.5]*INPUT_DIM)
+        ref_means[3] = 28.0 # BMI 
         ref_means[14] = 3.0 # MentHlth
         
         ref_stds = np.array([0.5]*INPUT_DIM)
-        ref_stds[3] = 6.0 # BMI std
-        ref_stds[14] = 5.0 # MentHlth
-        
-        # Adjust indices if needed based on typical BRFSS order dropping target
-        # [HighBP, HighChol, CholCheck, BMI, Smoker, Stroke, ...]
+        ref_stds[3] = 6.0 
+        ref_stds[14] = 5.0 
         
         X_scaled = (X - ref_means) / (ref_stds + 1e-6)
         X_tensor = torch.FloatTensor(X_scaled)
         
-        print(f"DEBUG: Data Shape: {X_tensor.shape}", flush=True)
-
         # Run Model
         poison_count = 0
         safe_count = 0
@@ -369,47 +412,14 @@ async def scan_dataset(file: UploadFile = File(...)):
         batch_size = 256
         dataset_status = []
         
-        if len(X_tensor) == 0:
-            print("DEBUG: Tensor is empty!", flush=True)
-
         with torch.no_grad():
             for i in range(0, len(X_tensor), batch_size):
-                print(f"DEBUG: Starting Batch {i}", flush=True)
                 batch = X_tensor[i:i+batch_size]
                 embeddings = encoder(batch)
-                
                 norms = torch.norm(embeddings, dim=1)
                 
-                # DEBUG: Proof of Life (File Log + Terminal)
-                if i == 0: 
-                    print("DEBUG: ATTEMPTING TO WRITE LOG...", flush=True)
-                    log_msg = (
-                        f"\n\n{'='*20} !!! MODEL INFERENCE TRIGGERED !!! {'='*20}\n"
-                        f"[Model Internal] Batch 0 Embedding Norms (First 5): {norms[:5].tolist()}\n"
-                        f"[Model Internal] Mean Norm: {norms.mean().item():.4f}\n"
-                        f"{'='*65}\n"
-                    )
-                    print(log_msg, flush=True)
-                    
-                    # Write to file for absolute proof
-                    try:
-                        with open("model_inference_log.txt", "a") as f:
-                            f.write(log_msg)
-                            f.flush()
-                        print("DEBUG: LOG WRITTEN SUCCESSFULLY", flush=True)
-                    except Exception as e:
-                        print(f"DEBUG: LOG WRITE FAILED: {e}", flush=True)
-                
                 for idx, norm in enumerate(norms):
-                    # Pure Model Logic:
-                    # If the input is far from the distribution the model saw during training,
-                    # the projection head (trained via contrastive loss) should map it to a widely different point 
-                    # or the unnormalized magnitude will be extreme due to ReLU on extreme inputs.
-                    
                     is_poison = False
-                    
-                    # Threshold based on validation of "safe" data (Mean ~26)
-                    # We set a high threshold because our poison is extreme (1000+ sigma).
                     if norm.item() > 150.0:
                         is_poison = True
                          
@@ -425,34 +435,64 @@ async def scan_dataset(file: UploadFile = File(...)):
         poison_df = df[df['_status'] == 'POISON'].drop('_status', axis=1)
         safe_df = df[df['_status'] == 'SAFE'].drop('_status', axis=1)
         
-        # Save to files
+        # Save to files (Local Storage for download)
         import uuid
         scan_id = str(uuid.uuid4())[:8]
         poison_filename = f"poison_{scan_id}.csv"
         safe_filename = f"safe_{scan_id}.csv"
         
-        # Ensure downloads directory exists
         os.makedirs("downloads", exist_ok=True)
-        
         poison_path = os.path.join("downloads", poison_filename)
         safe_path = os.path.join("downloads", safe_filename)
         
         poison_df.to_csv(poison_path, index=False)
         safe_df.to_csv(safe_path, index=False)
         
-        print(f"DEBUG: Saved {len(poison_df)} poison rows to {poison_path}", flush=True)
-        print(f"DEBUG: Saved {len(safe_df)} safe rows to {safe_path}", flush=True)
+        # --- MongoDB Storage ---
+        # Store metadata and result summary
+        scan_record = {
+            "scan_id": scan_id,
+            "filename": file.filename,
+            "uploaded_by": current_user['username'],
+            "timestamp": datetime.utcnow(),
+            "total_rows": len(df),
+            "poison_count": poison_count,
+            "safe_count": safe_count,
+            "poison_file_path": poison_path,
+            "safe_file_path": safe_path
+        }
+        
+        db = get_database()
+        await db.scans.insert_one(scan_record)
+        print(f"DEBUG: Saved scan record {scan_id} to MongoDB", flush=True)
 
         return {
+            "scan_id": scan_id,
             "total_rows": len(df),
             "poison_count": poison_count,
             "safe_count": safe_count,
             "poison_file": f"/api/downloads/{poison_filename}",
-            "safe_file": f"/api/downloads/{safe_filename}"
+            "safe_file": f"/api/downloads/{safe_filename}",
+            "message": "Scan completed and logged to database."
         }
     except Exception as e:
         print(f"Error scanning dataset: {e}")
         return {"error": str(e)}
+
+@app.get("/api/scans")
+async def get_scans(current_user: dict = Depends(get_current_user)):
+    db = get_database()
+    # Fetch scans for the user, sorted by timestamp desc
+    cursor = db.scans.find({"uploaded_by": current_user['username']}).sort("timestamp", -1).limit(50)
+    scans = await cursor.to_list(length=50)
+    
+    # Convert ObjectId to string and datetime to isoformat if needed
+    results = []
+    for scan in scans:
+        scan["_id"] = str(scan["_id"])
+        results.append(scan)
+        
+    return results
 
 @app.post("/api/check")
 def check_sample(req: CheckRequest):
