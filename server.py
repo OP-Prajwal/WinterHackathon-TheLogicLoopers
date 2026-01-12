@@ -30,9 +30,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 # Import model components
 from poison_guard.models.encoders.tabular_mlp import TabularMLPEncoder
 from poison_guard.models.heads.mlp import ProjectionHead
-from poison_guard.db import connect_to_mongo, close_mongo_connection, get_database
-from poison_guard.auth import get_password_hash, verify_password, create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
-from datetime import timedelta
 
 app = FastAPI(title="Poison Guard API", version="0.1.0")
 
@@ -564,6 +561,31 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
                 threshold = 150.0 
                 is_poison_batch = (norms > threshold).bool().tolist()
                 
+                # Calculate batch metrics
+                batch_poison_count = is_poison_batch.count(True)
+                batch_safe_count = batch_size - batch_poison_count
+                
+                # Calculate simple "Drift Score" (e.g., avg norm of batch)
+                avg_norm = norms.mean().item()
+                
+                # Verify tracker existence just in case, though global
+                if 'tracker' in globals():
+                    tracker.update(batch_size=len(batch), 
+                                  poison_count=batch_poison_count, 
+                                  safe_count=batch_safe_count, 
+                                  avg_drift_score=avg_norm)
+                                  
+                    # Broadcast stats (Wrapped in type)
+                    stats = tracker.get_stats()
+                    asyncio.run_coroutine_threadsafe(manager.broadcast({
+                        "type": "scan_metrics",
+                        "data": stats
+                    }), asyncio.get_event_loop())
+                
+                # Artificial delay for "Mind Blowing" visualization effect 
+                # (Otherwise it finishes too fast to see the cool charts)
+                await asyncio.sleep(0.05)
+
                 for is_p in is_poison_batch:
                     if is_p:
                         poison_count += 1
@@ -625,6 +647,18 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
     except Exception as e:
         print(f"Error scanning dataset: {e}")
         return {"error": str(e)}
+
+@app.websocket("/ws/metrics")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep alive / or handle client messages if needed
+            # For now just wait
+            await websocket.receive_text() 
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 
 @app.get("/api/dataset/export")
 async def export_dataset(scan_id: str, type: str, format: str):

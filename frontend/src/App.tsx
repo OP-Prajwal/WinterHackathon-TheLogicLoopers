@@ -4,8 +4,8 @@ import { Dashboard } from './pages/Dashboard';
 import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
 import { Signup } from './pages/Signup';
-
 import { SecurityEvents } from './pages/SecurityEvents';
+import { RealTimeMetrics } from './pages/RealTimeMetrics';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const token = localStorage.getItem('token');
@@ -29,7 +29,7 @@ function App() {
         }>
           <Route index element={<Dashboard />} />
           <Route path="events" element={<SecurityEvents />} />
-          <Route path="metrics" element={<div className="p-4">Metrics Detail (Placeholder)</div>} />
+          <Route path="metrics" element={<RealTimeMetrics />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
