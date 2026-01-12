@@ -5,7 +5,6 @@ import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
 import { EventLog } from '../components/dashboard/EventLog';
 import { ManualTest } from '../components/dashboard/ManualTest';
 import { MonitoringResults } from '../components/dashboard/MonitoringResults';
-import { PurificationPanel } from '../components/dashboard/PurificationPanel';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { DataImport } from '../components/dashboard/DataImport';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
@@ -163,21 +162,19 @@ export const Dashboard: React.FC = () => {
                 </div>
             </div>
 
-            {/* Bottom Row: Operations & Results */}
-            <div className="flex flex-col gap-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Bottom Row: Text Input & Purification */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className={showResults ? "lg:col-span-1" : "lg:col-span-2 transition-all duration-500"}>
                     <ManualTest />
-                    {showResults && result ? (
-                        <MonitoringResults
-                            scanId={result.scan_id}
-                            cleanCount={result.clean_count}
-                            poisonCount={result.poison_count}
-                            onClose={() => setShowResults(false)}
-                        />
-                    ) : (
-                        <PurificationPanel /> // Fallback or side-by-side if needed
-                    )}
                 </div>
+                {showResults && result && (
+                    <MonitoringResults
+                        scanId={result.scan_id}
+                        cleanCount={result.clean_count}
+                        poisonCount={result.poison_count}
+                        onClose={() => setShowResults(false)}
+                    />
+                )}
             </div>
         </div>
     );
