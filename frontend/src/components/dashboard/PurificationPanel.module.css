@@ -1,0 +1,195 @@
+.container {
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header h3 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+}
+
+.badge {
+    background: rgba(59, 130, 246, 0.1);
+    color: #60a5fa;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.dropZone {
+    border: 2px dashed var(--border-subtle);
+    border-radius: 8px;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--text-secondary);
+}
+
+.dropZone:hover {
+    border-color: var(--primary-brand);
+    color: var(--primary-brand);
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.dropZone p {
+    margin: 0;
+    font-weight: 500;
+}
+
+.dropZone span {
+    font-size: 0.8rem;
+    opacity: 0.7;
+}
+
+.fileSelected {
+    background: var(--surface-ground);
+    padding: 1rem;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.fileName {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.scanBtn {
+    background: var(--primary-brand);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: background 0.2s;
+}
+
+.scanBtn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.scanBtn:hover:not(:disabled) {
+    background: #2563eb;
+    /* Darker blue */
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.resultsArea {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 1.5rem;
+    overflow: hidden;
+}
+
+.statGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.statItem {
+    background: var(--surface-ground);
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.statLabel {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+}
+
+.statValue {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.statItem.safe .statValue {
+    color: var(--semantic-success);
+}
+
+.statItem.danger .statValue {
+    color: var(--semantic-danger);
+}
+
+.actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.downloadSafe,
+.downloadPoison {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: transform 0.1s;
+}
+
+.downloadSafe {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--semantic-success);
+}
+
+.downloadSafe:hover {
+    background: rgba(16, 185, 129, 0.25);
+}
+
+.downloadPoison {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--semantic-danger);
+}
+
+.downloadPoison:hover {
+    background: rgba(239, 68, 68, 0.25);
+}

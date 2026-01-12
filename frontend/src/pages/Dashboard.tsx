@@ -1,75 +1,127 @@
-import React from 'react';
-import { Activity, ShieldCheck, AlertTriangle, Database } from 'lucide-react';
-import MetricCard from '../components/metrics/MetricCard';
-import EffectiveRankChart from '../components/metrics/EffectiveRankChart';
+import React, { useEffect, useState } from 'react';
+import { usePoisonGuardSocket, type MetricsData } from '../services/websocket';
+import { MetricCard } from '../components/metrics/MetricCard';
+import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
+import { EventLog } from '../components/dashboard/EventLog';
+import { ManualTest } from '../components/dashboard/ManualTest';
+import { PurificationPanel } from '../components/dashboard/PurificationPanel';
+import { Activity, Layers, Zap, AlertTriangle, Play, Square, Skull } from 'lucide-react';
+import { api } from '../services/api';
+import classes from './Dashboard.module.css';
 
-const Dashboard: React.FC = () => {
+export const Dashboard: React.FC = () => {
+    const { metrics, events } = usePoisonGuardSocket();
+    const [history, setHistory] = useState<MetricsData[]>([]);
+    const [isMonitoring, setIsMonitoring] = useState(false);
+
+    // Sync state with metrics for the chart
+    useEffect(() => {
+        if (metrics) {
+            setHistory(prev => [...prev, metrics].slice(-100));
+        }
+    }, [metrics]);
+
+    const handleStart = async () => {
+        try {
+            await api.startMonitoring();
+            setIsMonitoring(true);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const handleStop = async () => {
+        try {
+            await api.stopMonitoring();
+            setIsMonitoring(false);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const handleInject = async () => {
+        try {
+            await api.simulateAttack();
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    // Derived values
+    const currentRank = metrics?.effective_rank.toFixed(2) ?? '-';
+    const density = metrics?.density.toFixed(4) ?? '-';
+    const driftScore = metrics?.drift_score.toFixed(4) ?? '-';
+    const batch = metrics?.batch ?? 0;
+
+    // Status check for cards
+    const rankStatus = metrics && metrics.effective_rank < 10 ? 'danger' : 'normal';
+    const driftStatus = metrics && metrics.drift_score > 0.5 ? 'warning' : 'neutral';
+
     return (
-        <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className={classes.dashboard}>
+            {/* Header / Controls */}
+            <div className={classes.header}>
+                <div>
+                    <h1>System Dashboard</h1>
+                    <p>Real-time Prediction & Monitoring</p>
+                </div>
+                <div className={classes.controls}>
+                    {!isMonitoring ? (
+                        <button onClick={handleStart} className={classes.btnStart}>
+                            <Play size={16} /> Start Monitoring
+                        </button>
+                    ) : (
+                        <button onClick={handleStop} className={classes.btnStop}>
+                            <Square size={16} /> Stop
+                        </button>
+                    )}
+                    <button onClick={handleInject} className={classes.btnInject} disabled={!isMonitoring}>
+                        <Skull size={16} /> Sim Attack
+                    </button>
+                </div>
+            </div>
+
+            {/* Top Metrics Grid */}
+            <div className={classes.metricsGrid}>
                 <MetricCard
-                    label="Total Scans"
-                    value="12,345"
-                    change="+12% from last month"
-                    trend="up"
-                    icon={Activity}
+                    title="Scanned Batches"
+                    value={batch}
+                    icon={<Layers size={20} />}
+                    delay={0}
                 />
                 <MetricCard
-                    label="Security Score"
-                    value="98.2%"
-                    change="+2.1% from last week"
-                    trend="up"
-                    icon={ShieldCheck}
+                    title="Model Confidence (Rank)"
+                    value={currentRank}
+                    status={rankStatus}
+                    icon={<Activity size={20} />}
+                    delay={0.1}
                 />
                 <MetricCard
-                    label="Threats Detected"
-                    value="24"
-                    change="-5% from last month"
-                    trend="down"
-                    icon={AlertTriangle}
+                    title="Feature Density"
+                    value={density}
+                    icon={<Zap size={20} />}
+                    delay={0.2}
                 />
                 <MetricCard
-                    label="Database Size"
-                    value="1.2TB"
-                    change="+0.5% from last month"
-                    trend="neutral"
-                    icon={Database}
+                    title="Drift Probability"
+                    value={driftScore}
+                    status={driftStatus}
+                    icon={<AlertTriangle size={20} />}
+                    delay={0.3}
                 />
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-                <div className="col-span-4">
-                    <EffectiveRankChart />
+            {/* Main Content Grid */}
+            <div className={classes.mainGrid}>
+                <div className={classes.chartSection}>
+                    <EffectiveRankChart data={history} />
                 </div>
-                <div className="col-span-3 bg-card rounded-lg border border-border p-6 text-card-foreground">
-                    <h3 className="font-semibold text-lg mb-4">Recent Alerts</h3>
-                    <div className="space-y-4">
-                        <div className="flex items-center">
-                            <div className="ml-4 space-y-1">
-                                <p className="text-sm font-medium leading-none">Suspicious IP Blocked</p>
-                                <p className="text-xs text-muted-foreground">10 minutes ago</p>
-                            </div>
-                            <div className="ml-auto font-medium text-destructive">High</div>
-                        </div>
-                        <div className="flex items-center">
-                            <div className="ml-4 space-y-1">
-                                <p className="text-sm font-medium leading-none">New User Admin</p>
-                                <p className="text-xs text-muted-foreground">1 hour ago</p>
-                            </div>
-                            <div className="ml-auto font-medium text-green-500">Low</div>
-                        </div>
-                        <div className="flex items-center">
-                            <div className="ml-4 space-y-1">
-                                <p className="text-sm font-medium leading-none">System Update</p>
-                                <p className="text-xs text-muted-foreground">2 hours ago</p>
-                            </div>
-                            <div className="ml-auto font-medium text-blue-500">Info</div>
-                        </div>
-                    </div>
+                <div className={classes.sideSection}>
+                    <PurificationPanel />
+                    <ManualTest />
+                    <EventLog events={events} />
                 </div>
             </div>
         </div>
     );
 };
-
-export default Dashboard;

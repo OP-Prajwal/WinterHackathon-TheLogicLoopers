@@ -1,16 +1,27 @@
 import React from 'react';
+import { Bell, User } from 'lucide-react';
+import classes from './Header.module.css';
 
-const Header: React.FC = () => {
+export const Header: React.FC = () => {
     return (
-        <header className="h-16 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 fixed top-0 w-full z-10 pl-64">
-            <div className="flex h-14 items-center px-6">
-                <h2 className="font-semibold text-lg">Dashboard</h2>
-                <div className="ml-auto flex items-center space-x-4">
-                    {/* Add header actions here if needed */}
+        <header className={classes.header}>
+            <div className={classes.title}>
+                <h1>Dashboard</h1>
+                <span className={classes.subtitle}>Monitoring BRFSS Diabetes Training</span>
+            </div>
+
+            <div className={classes.actions}>
+                <button className={classes.iconBtn}>
+                    <Bell size={20} />
+                    <span className={classes.badge}>2</span>
+                </button>
+                <div className={classes.profile}>
+                    <div className={classes.avatar}>
+                        <User size={18} />
+                    </div>
+                    <span>Admin</span>
                 </div>
             </div>
         </header>
     );
 };
-
-export default Header;

@@ -1,0 +1,71 @@
+.card {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--text-secondary);
+}
+
+.title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.icon {
+    opacity: 0.7;
+}
+
+.content {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-feature-settings: "tnum";
+}
+
+.label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+/* Status variants */
+.normal {
+    border-top: 4px solid var(--accent-green);
+}
+
+.warning {
+    border-top: 4px solid var(--accent-yellow);
+}
+
+.danger {
+    border-top: 4px solid var(--accent-red);
+    background: linear-gradient(to bottom right, var(--bg-secondary), rgba(239, 68, 68, 0.1));
+}
+
+.neutral {
+    border-top: 4px solid var(--accent-blue);
+}

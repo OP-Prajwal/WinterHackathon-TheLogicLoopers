@@ -13,7 +13,7 @@ class TabularMLPEncoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         
-        self.net = nn.Sequential(
+        self.network = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
@@ -39,4 +39,4 @@ class TabularMLPEncoder(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.encoder(x)
+        return self.network(x)

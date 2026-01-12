@@ -1,44 +1,53 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, LayoutDashboard, Settings, User } from 'lucide-react';
+import { LayoutDashboard, Activity, ShieldAlert, Settings } from 'lucide-react';
+import { motion } from 'framer-motion';
+import classes from './Sidebar.module.css';
 import clsx from 'clsx';
 
-const Sidebar: React.FC = () => {
-    const navItems = [
-        { icon: Home, label: 'Home', path: '/' },
-        { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
-        { icon: User, label: 'Profile', path: '/profile' },
-        { icon: Settings, label: 'Settings', path: '/settings' },
-    ];
+const navItems = [
+    { icon: LayoutDashboard, label: 'Overview', path: '/' },
+    { icon: Activity, label: 'Real-time Metrics', path: '/metrics' },
+    { icon: ShieldAlert, label: 'Security Events', path: '/events' },
+    { icon: Settings, label: 'Settings', path: '/settings' },
+];
 
+export const Sidebar: React.FC = () => {
     return (
-        <aside className="w-64 bg-card border-r border-border h-screen flex flex-col p-4 fixed left-0 top-0">
-            <div className="flex items-center gap-2 mb-8 px-2">
-                <div className="w-8 h-8 bg-primary rounded-lg"></div>
-                <span className="font-bold text-xl">LogicLoopers</span>
+        <aside className={classes.sidebar}>
+            <div className={classes.logo}>
+                <div className={classes.logoIcon} />
+                <span>PoisonGuard</span>
             </div>
 
-            <nav className="flex-1 space-y-1">
+            <nav className={classes.nav}>
                 {navItems.map((item) => (
                     <NavLink
                         key={item.path}
                         to={item.path}
-                        className={({ isActive }) =>
-                            clsx(
-                                'flex items-center gap-3 px-3 py-2 rounded-md transition-colors',
-                                isActive
-                                    ? 'bg-primary text-primary-foreground'
-                                    : 'hover:bg-accent hover:text-accent-foreground text-muted-foreground'
-                            )
-                        }
+                        className={({ isActive }) => clsx(classes.link, isActive && classes.active)}
                     >
-                        <item.icon size={20} />
-                        <span className="font-medium">{item.label}</span>
+                        {({ isActive }) => (
+                            <>
+                                <item.icon size={20} />
+                                <span>{item.label}</span>
+                                {isActive && (
+                                    <motion.div
+                                        layoutId="active-indicator"
+                                        className={classes.activeIndicator}
+                                        transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                                    />
+                                )}
+                            </>
+                        )}
                     </NavLink>
                 ))}
             </nav>
+
+            <div className={classes.footer}>
+                <div className={classes.statusDot} />
+                <span>System Online</span>
+            </div>
         </aside>
     );
 };
-
-export default Sidebar;

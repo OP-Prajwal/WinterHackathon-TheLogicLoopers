@@ -4,3 +4,16 @@ __pycache__/
 .env
 .DS_Store
 .vscode/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Frontend build
+frontend/dist/
+frontend/build/
+
+# Application data
+downloads/
+model_inference_log.txt
