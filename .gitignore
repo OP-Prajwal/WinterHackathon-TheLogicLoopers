@@ -18,3 +18,4 @@ frontend/build/
 downloads/
 temp_scans/
 model_inference_log.txt
+env/
