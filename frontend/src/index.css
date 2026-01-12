@@ -1,90 +1,47 @@
-:root {
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-tertiary: #334155;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --accent-blue: #3b82f6;
-  --accent-red: #ef4444;
-  --accent-green: #22c55e;
-  --accent-yellow: #eab308;
-  --border-color: #334155;
-  --font-sans: 'Inter', system-ui, sans-serif;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-dark-900 text-gray-200 font-sans antialiased overflow-hidden;
+    background-image: radial-gradient(circle at 50% 0%, #1a1a1a 0%, #030712 100%);
+  }
 }
 
-body {
-  margin: 0;
-  padding: 0;
-  font-family: var(--font-sans);
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
+@layer utilities {
+  .translucent {
+    @apply bg-dark-800/80 backdrop-blur-md border border-dark-700;
+  }
+
+  .glass-panel {
+    @apply bg-dark-800/40 backdrop-blur-xl border border-white/10 shadow-xl rounded-2xl;
+  }
+
+  .text-glow-cyan {
+    text-shadow: 0 0 10px rgba(6, 182, 212, 0.5), 0 0 20px rgba(6, 182, 212, 0.3);
+  }
+
+  .text-glow-violet {
+    text-shadow: 0 0 10px rgba(139, 92, 246, 0.5), 0 0 20px rgba(139, 92, 246, 0.3);
+  }
 }
 
-* {
-  box-sizing: border-box;
-}
-
-/* Utilities */
-.flex {
-  display: flex;
-}
-
-.flex-col {
-  flex-direction: column;
-}
-
-.items-center {
-  align-items: center;
-}
-
-.justify-between {
-  justify-content: space-between;
-}
-
-.gap-2 {
-  gap: 0.5rem;
-}
-
-.gap-4 {
-  gap: 1rem;
-}
-
-.p-4 {
-  padding: 1rem;
-}
-
-.rounded-lg {
-  border-radius: 0.5rem;
-}
-
-.text-sm {
-  font-size: 0.875rem;
-}
-
-.font-bold {
-  font-weight: 700;
-}
-
-.translucent {
-  background: rgba(30, 41, 59, 0.7);
-  backdrop-filter: blur(10px);
-}
-
-/* Scrollbar */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--bg-tertiary);
-  border-radius: 4px;
+  background: #334155;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary);
+  background: #475569;
 }

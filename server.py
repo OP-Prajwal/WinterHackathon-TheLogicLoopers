@@ -480,6 +480,7 @@ def check_sample(req: CheckRequest):
     print(f"[check_sample] LLM Used: {llm_used}, Risk: {llm_risk}", flush=True)
     print(f"[check_sample] Contradictions: {contradictions}", flush=True)
     print(f"[check_sample] Anomalies: {anomalies}", flush=True)
+    print(f"[check_sample] RAW PARSED BMI: {parsed.get('BMI')}", flush=True)
     
     # Build input vector for model inference (21 features)
     input_vec = np.array([[
@@ -514,7 +515,13 @@ def check_sample(req: CheckRequest):
     # Combine LLM analysis with model score
     has_contradictions = len(contradictions) > 0
     has_anomalies = len(anomalies) > 0
-    model_detected = score > 150.0
+    
+    # Threshold Tuning:
+    # Normal data yields norms ~0.5 - 1.5
+    # Outliers (like BMI 1000) yielded ~10.7
+    # Setting threshold to 3.0 to catch these without hardcoding features
+    model_detected = score > 3.0
+    
     llm_detected = llm_risk in ["SUSPICIOUS", "DANGEROUS"]
     
     is_poison = model_detected or has_anomalies or has_contradictions or llm_detected

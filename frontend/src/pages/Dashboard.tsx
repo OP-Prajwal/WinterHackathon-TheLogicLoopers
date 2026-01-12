@@ -5,9 +5,9 @@ import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
 import { EventLog } from '../components/dashboard/EventLog';
 import { ManualTest } from '../components/dashboard/ManualTest';
 import { PurificationPanel } from '../components/dashboard/PurificationPanel';
+import { ControlPanel } from '../components/dashboard/ControlPanel'; // Added ControlPanel
 import { Activity, Layers, Zap, AlertTriangle, Play, Square, Skull } from 'lucide-react';
 import { api } from '../services/api';
-import classes from './Dashboard.module.css';
 
 export const Dashboard: React.FC = () => {
     const { metrics, events } = usePoisonGuardSocket();
@@ -58,31 +58,41 @@ export const Dashboard: React.FC = () => {
     const driftStatus = metrics && metrics.drift_score > 0.5 ? 'warning' : 'neutral';
 
     return (
-        <div className={classes.dashboard}>
+        <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-8">
             {/* Header / Controls */}
-            <div className={classes.header}>
+            <div className="flex items-center justify-between mb-2">
                 <div>
-                    <h1>System Dashboard</h1>
-                    <p>Real-time Prediction & Monitoring</p>
+                    <h2 className="text-3xl font-bold text-white tracking-tight">System Dashboard</h2>
+                    <p className="text-cyan-400 text-sm font-mono mt-1">Real-time Prediction & Monitoring</p>
                 </div>
-                <div className={classes.controls}>
+                <div className="flex gap-4">
                     {!isMonitoring ? (
-                        <button onClick={handleStart} className={classes.btnStart}>
-                            <Play size={16} /> Start Monitoring
+                        <button
+                            onClick={handleStart}
+                            className="flex items-center gap-2 px-6 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-lg shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all transform hover:scale-105"
+                        >
+                            <Play size={18} fill="currentColor" /> Start Monitoring
                         </button>
                     ) : (
-                        <button onClick={handleStop} className={classes.btnStop}>
-                            <Square size={16} /> Stop
+                        <button
+                            onClick={handleStop}
+                            className="flex items-center gap-2 px-6 py-2.5 bg-dark-800 border border-red-500/50 text-red-400 hover:bg-red-500/10 font-bold rounded-lg transition-all"
+                        >
+                            <Square size={18} fill="currentColor" /> Stop
                         </button>
                     )}
-                    <button onClick={handleInject} className={classes.btnInject} disabled={!isMonitoring}>
-                        <Skull size={16} /> Sim Attack
+                    <button
+                        onClick={handleInject}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-dark-800 border border-purple-500/50 text-purple-400 hover:bg-purple-500/10 font-bold rounded-lg transition-all"
+                        disabled={!isMonitoring}
+                    >
+                        <Skull size={18} /> Sim Attack
                     </button>
                 </div>
             </div>
 
             {/* Top Metrics Grid */}
-            <div className={classes.metricsGrid}>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <MetricCard
                     title="Scanned Batches"
                     value={batch}
@@ -90,7 +100,7 @@ export const Dashboard: React.FC = () => {
                     delay={0}
                 />
                 <MetricCard
-                    title="Model Confidence (Rank)"
+                    title="Model Confidence"
                     value={currentRank}
                     status={rankStatus}
                     icon={<Activity size={20} />}
@@ -111,16 +121,41 @@ export const Dashboard: React.FC = () => {
                 />
             </div>
 
-            {/* Main Content Grid */}
-            <div className={classes.mainGrid}>
-                <div className={classes.chartSection}>
-                    <EffectiveRankChart data={history} />
+            {/* Main Content Grid - Row 2: Analytics & Logs */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Left: Live Chart */}
+                <div className="lg:col-span-2 glass-panel p-6 flex flex-col relative overflow-hidden min-h-[450px]">
+                    <div className="absolute top-0 right-0 p-4 opacity-20">
+                        <div className="w-24 h-24 border-r-2 border-t-2 border-cyan-500 rounded-tr-3xl" />
+                    </div>
+                    <div className="flex items-center justify-between mb-6">
+                        <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
+                            <Activity size={18} className="text-cyan-400" />
+                            Live Representation Dynamics
+                        </h3>
+                        <div className="flex gap-2">
+                            <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+                            <span className="text-xs text-cyan-500 font-mono">LIVE FEED</span>
+                        </div>
+                    </div>
+                    <div className="flex-1 w-full h-full min-h-0">
+                        <EffectiveRankChart data={history} />
+                    </div>
                 </div>
-                <div className={classes.sideSection}>
-                    <PurificationPanel />
-                    <ManualTest />
-                    <EventLog events={events} />
+
+                {/* Right: System Status & Events */}
+                <div className="flex flex-col gap-6">
+                    <ControlPanel />
+                    <div className="flex-1 glass-panel p-6 overflow-hidden flex flex-col min-h-[300px]">
+                        <EventLog events={events} />
+                    </div>
                 </div>
+            </div>
+
+            {/* Bottom Row: Operations Tools */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <ManualTest />
+                <PurificationPanel />
             </div>
         </div>
     );
