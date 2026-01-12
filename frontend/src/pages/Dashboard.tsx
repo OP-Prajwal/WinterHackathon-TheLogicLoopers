@@ -4,15 +4,18 @@ import { MetricCard } from '../components/metrics/MetricCard';
 import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
 import { EventLog } from '../components/dashboard/EventLog';
 import { ManualTest } from '../components/dashboard/ManualTest';
-import { PurificationPanel } from '../components/dashboard/PurificationPanel';
-import { ControlPanel } from '../components/dashboard/ControlPanel'; // Added ControlPanel
-import { Activity, Layers, Zap, AlertTriangle, Play, Square, Skull } from 'lucide-react';
+import { MonitoringResults } from '../components/dashboard/MonitoringResults';
+import { ControlPanel } from '../components/dashboard/ControlPanel';
+import { DataImport } from '../components/dashboard/DataImport';
+import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
 import { api } from '../services/api';
 
 export const Dashboard: React.FC = () => {
-    const { metrics, events } = usePoisonGuardSocket();
+    const { metrics, events, result, clearResult } = usePoisonGuardSocket();
     const [history, setHistory] = useState<MetricsData[]>([]);
     const [isMonitoring, setIsMonitoring] = useState(false);
+    const [loadedData, setLoadedData] = useState<{ filename: string; rows: number } | null>(null);
+    const [showResults, setShowResults] = useState(false);
 
     // Sync state with metrics for the chart
     useEffect(() => {
@@ -21,12 +24,23 @@ export const Dashboard: React.FC = () => {
         }
     }, [metrics]);
 
+    // Show results when ready
+    useEffect(() => {
+        if (result) {
+            setShowResults(true);
+            setIsMonitoring(false);
+        }
+    }, [result]);
+
     const handleStart = async () => {
         try {
+            clearResult(); // Reset previous results
             await api.startMonitoring();
             setIsMonitoring(true);
+            setShowResults(false);
         } catch (e) {
-            console.error(e);
+            console.error("Start failed:", e);
+            alert(`Start failed: ${e instanceof Error ? e.message : String(e)}`);
         }
     };
 
@@ -39,18 +53,11 @@ export const Dashboard: React.FC = () => {
         }
     };
 
-    const handleInject = async () => {
-        try {
-            await api.simulateAttack();
-        } catch (e) {
-            console.error(e);
-        }
-    };
-
     // Derived values
     const currentRank = metrics?.effective_rank.toFixed(2) ?? '-';
     const density = metrics?.density.toFixed(4) ?? '-';
-    const driftScore = metrics?.drift_score.toFixed(4) ?? '-';
+    const driftScore = metrics?.drift_score.toFixed(4) ?? '-'; // Using fixed(4)
+    const driftValue = metrics?.drift_score ?? 0;
     const batch = metrics?.batch ?? 0;
 
     // Status check for cards
@@ -59,11 +66,21 @@ export const Dashboard: React.FC = () => {
 
     return (
         <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-8">
+            {/* Data Import Section - TOP */}
+            <DataImport onDataLoaded={setLoadedData} />
+
             {/* Header / Controls */}
+            {loadedData && (
+                <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-sm">
+                    <span className="text-gray-400">Ready to process:</span>
+                    <span className="text-cyan-400 font-mono">{loadedData.filename}</span>
+                    <span className="text-gray-500">({loadedData.rows} rows)</span>
+                </div>
+            )}
             <div className="flex items-center justify-between mb-2">
                 <div>
                     <h2 className="text-3xl font-bold text-white tracking-tight">System Dashboard</h2>
-                    <p className="text-cyan-400 text-sm font-mono mt-1">Real-time Prediction & Monitoring</p>
+                    <p className="text-cyan-400 text-sm font-mono mt-1">Real-time Poison Detection & Monitoring</p>
                 </div>
                 <div className="flex gap-4">
                     {!isMonitoring ? (
@@ -81,13 +98,6 @@ export const Dashboard: React.FC = () => {
                             <Square size={18} fill="currentColor" /> Stop
                         </button>
                     )}
-                    <button
-                        onClick={handleInject}
-                        className="flex items-center gap-2 px-6 py-2.5 bg-dark-800 border border-purple-500/50 text-purple-400 hover:bg-purple-500/10 font-bold rounded-lg transition-all"
-                        disabled={!isMonitoring}
-                    >
-                        <Skull size={18} /> Sim Attack
-                    </button>
                 </div>
             </div>
 
@@ -152,13 +162,23 @@ export const Dashboard: React.FC = () => {
                 </div>
             </div>
 
-            {/* Bottom Row: Operations Tools */}
+            {/* Bottom Row: Operations & Results */}
             <div className="flex flex-col gap-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <ManualTest />
-                    <PurificationPanel />
+                    {showResults && result ? (
+                        <MonitoringResults
+                            scanId={result.scan_id}
+                            cleanCount={result.clean_count}
+                            poisonCount={result.poison_count}
+                            onClose={() => setShowResults(false)}
+                        />
+                    ) : (
+                        <PurificationPanel /> // Fallback or side-by-side if needed
+                    )}
                 </div>
             </div>
         </div>
+        </div >
     );
 };

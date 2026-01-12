@@ -183,6 +183,13 @@ state = {
     "speed": 1.0           # Simulation Speed (delay in seconds)
 }
 
+# --- Streaming Data Storage (for user-uploaded files) ---
+streaming_data = {
+    "tensor": None,        # User uploaded data as tensor
+    "filename": None,      # Original filename
+    "total_rows": 0        # Number of rows in uploaded file
+}
+
 # --- WebSocket Manager ---
 class ConnectionManager:
     def __init__(self):
@@ -204,6 +211,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+<<<<<<< HEAD
 # --- Personal Training Manager ---
 class TrainingSession:
     def __init__(self, username: str, total_epochs: int = 20):
@@ -238,134 +246,235 @@ class PersonalTrainingManager:
                 pass
 
 personal_manager = PersonalTrainingManager()
+=======
+# --- Global storage for monitoring results ---
+monitoring_results = {
+    "scan_id": None,
+    "clean_indices": [],
+    "poison_indices": [],
+    "clean_count": 0,
+    "poison_count": 0,
+    "complete": False
+}
+>>>>>>> origin/feat/dashboard-realtime-input-20260113
 
 # --- Monitoring/Prediction Loop ---
 async def monitoring_loop():
-    global state
-    batch_size = 64
-    total_samples = len(X_test_tensor)
-    idx = 0
+    global state, streaming_data, monitoring_results
+    batch_size = 10
     
-    while state["training"]:
-        state["batch"] += 1
-        
-        # Get Batch from Real Data
-        next_idx = min(idx + batch_size, total_samples)
-        batch_data = X_test_tensor[idx:next_idx]
-        
-        if len(batch_data) < batch_size:
-            idx = 0
-            batch_data = X_test_tensor[0:batch_size] # Loop around
-        else:
-            idx = next_idx
-
-        # Simulate Attack injection if flagged
-        if state["poisoned"]:
-             # Poison: Inject anomalies (e.g., massive values or correlated noise)
-             noise = torch.randn_like(batch_data) * 5.0 
-             batch_data = batch_data + noise
-        
-        # Run Prediction (Forward pass)
-        with torch.no_grad():
-            embeddings = encoder(batch_data)
-            rank = calculate_effective_rank(embeddings)
-            density = float(embeddings.std().item())
-        
-        # Heuristic for "Poison Detected" based on visual feedback
-        # If poisoned, rank drops or density explodes depending on attack type.
-        # With noise attack, rank usually increases (whiter noise) but we want to show 'Bad' state.
-        # Let's say we trained to maximize rank of valid data (SimCLR does uniformity).
-        # Poison might cluster data (collapsing rank) OR be OOD.
-        
-        # If we injected noise, rank actually goes UP (more random). 
-        # But if we inject "constant" bias (which is a common attack), rank goes DOWN.
-        # Let's switch injection to "Bias Attack" to make rank drop (which looks "bad" usually).
-        
-        if state["poisoned"]:
-             # Override to Low Rank Attack
-             batch_data = torch.ones_like(batch_data) * 10.0 + torch.randn_like(batch_data) * 0.01
-             with torch.no_grad():
-                embeddings = encoder(batch_data)
-                rank = calculate_effective_rank(embeddings) 
-                # Ideally rank should be near 1.0 now
-        
-        # Drift Score Calculation (Demo logic)
-        # Assuming model trained on Clean has High Rank > 10.
-        
-        # Scale thresholds by sensitivity
-        # High Sensitivity (1.5) -> Critical Threshold increases (e.g. 5 * 1.5 = 7.5), distinct drop needed.
-        # Actually logic is reverse: If rank drops, it's bad.
-        # High Sensitivity => We want to trigger HALT easier? 
-        # Halt triggers if drift > 0.8.
-        # Drift > 0.8 happens if rank < threshold.
-        # So check: if rank < (5.0 * sensitivity): drift = 0.9
-        # Example: Sens 1.5 (High) -> Threshold 7.5. If rank is 6.0 (normally safe), now it's < 7.5 => ALERT. Correct.
-        
-        critical_thresh = 5.0 * state["sensitivity"]
-        warning_thresh = 15.0 * state["sensitivity"]
-        
-        drift = 0.0
-        if rank < critical_thresh:
-            drift = 0.9 # High drift/poison probability
-        elif rank < warning_thresh:
-            drift = 0.4
-        else:
-            drift = 0.05
-            
-        metric_data = {
-            "dataset": "diabetes_brfss_stream",
-            "batch": state["batch"],
-            "effective_rank": rank,
-            "density": density,
-            "drift_score": drift,
-            "action": "HALT" if drift > 0.8 else "SAFE",
-            "timestamp": "now",
-            "is_poisoned": state["poisoned"] # Ground truth for demo
+    try:
+        # Reset batch counter and results
+        state["batch"] = 0
+        monitoring_results = {
+            "scan_id": str(uuid.uuid4())[:8],
+            "clean_indices": [],
+            "poison_indices": [],
+            "clean_count": 0,
+            "poison_count": 0,
+            "complete": False
         }
         
-        await manager.broadcast({
-            "type": "metrics",
-            "data": metric_data
-        })
+        # Load data
+        if streaming_data.get("tensor") is not None:
+            data_tensor = streaming_data["tensor"]
+            data_source = streaming_data.get("filename", "uploaded")
+            print(f"[STREAM] Using uploaded file: {data_source}", flush=True)
+        else:
+            if 'X_test_tensor' in globals():
+                data_tensor = X_test_tensor
+                data_source = "diabetes_brfss.csv (default)"
+            else:
+                 data_tensor = torch.randn(100, 10) 
+                 data_source = "random_noise (fallback)"
+            print(f"[STREAM] Using default data: {data_source}", flush=True)
         
-        # Prediction Event
-        if drift > 0.8:
-             await manager.broadcast({
-                "type": "event",
-                "data": {
-                    "severity": "danger",
-                    "message": f"POISON DETECTED! Batch {state['batch']} - Low Rank: {rank:.2f}",
-                    "batch": state['batch']
-                }
-            })
-             
-             # STRICT MODE: Halt immediately on attack detection
-             if state["strict_mode"]:
-                 state["halted"] = True
-                 state["training"] = False
-                 state["status"] = "HALTED"
-                 await manager.broadcast({
-                    "type": "halt",
-                    "data": {
-                        "message": "🚨 STRICT MODE: System HALTED - Poison attack detected!",
-                        "batch": state['batch'],
-                        "rank": rank
-                    }
-                 })
-                 print(f"[STRICT MODE] System HALTED at batch {state['batch']}", flush=True)
-                 return  # Exit the monitoring loop
-                 
-        elif random.random() < 0.05:
-             await manager.broadcast({
-                "type": "event",
-                "data": {
-                    "severity": "info",
-                    "message": f"Batch {state['batch']} verified safe.",
-                    "batch": state['batch']
-                }
-            })
+        total_samples = len(data_tensor)
+        if total_samples == 0:
+             raise ValueError("Dataset is empty.")
 
-        await asyncio.sleep(state["speed"])
+        total_batches = (total_samples + batch_size - 1) // batch_size
+        idx = 0
+        
+        monitoring_results["clean_indices"] = []
+        monitoring_results["poison_indices"] = []
+        
+        poisoned_batches = []
+        clean_batches = []
+        
+        # Baseline Phase: Use KNOWN CLEAN reference (X_test_tensor) if available
+        # This prevents the "majority poison" attack where the model normalizes the poison.
+        # Baseline Phase: Use KNOWN CLEAN reference (X_test_tensor)
+        reference_data = X_test_tensor if 'X_test_tensor' in globals() else data_tensor[:min(100, total_samples)]
+        
+        with torch.no_grad():
+            # Use Random Sample from reference as Anchors
+            if len(reference_data) > 500:
+                perm = torch.randperm(len(reference_data))
+                anchors = reference_data[perm[:500]] # More anchors for better coverage
+            else:
+                anchors = reference_data
+                
+            # Compute Anchor Embeddings (Normalized)
+            anchor_embeddings = encoder(anchors)
+            anchor_embeddings = torch.nn.functional.normalize(anchor_embeddings, dim=1)
+            
+            # Calibration: Cross-validate on the reference set
+            val_subset = anchors[:100]
+            val_embeddings = anchor_embeddings[:100]
+            
+            sim_matrix = torch.matmul(val_embeddings, anchor_embeddings.T) # (100, 500)
+            top_sims, _ = sim_matrix.topk(2, dim=1)
+            nearest_neighbor_sims = top_sims[:, 1]
+            
+            baseline_scores = 1.0 - nearest_neighbor_sims
+            baseline_median = float(baseline_scores.median().item())
+            mad = float((baseline_scores - baseline_median).abs().median().item())
+            
+            # Threshold: Median + 6 * MAD (RELAXED widely to prevent False Positives on noisy safe data)
+            dynamic_threshold = baseline_median + 6.0 * max(mad, 0.02)
+
+            # Input Statistics
+            ref_mean = reference_data.mean(dim=0)
+            ref_std = reference_data.std(dim=0)
+        
+        print(f"[STREAM] Baseline Config: Threshold={dynamic_threshold:.3f}, MedianDist={baseline_median:.3f}", flush=True)
+        
+        await manager.broadcast({
+            "type": "event",
+            "data": {"severity": "info", "message": f"Started scanning {total_samples} rows from {data_source}", "batch": 0}
+        })
+
+        while state["training"] and idx < total_samples:
+            state["batch"] += 1
+            batch_start_idx = idx
+            
+            # Get Batch
+            next_idx = min(idx + batch_size, total_samples)
+            batch_data = data_tensor[idx:next_idx]
+            batch_rows = len(batch_data)
+            idx = next_idx
+            
+            # Run Prediction
+            with torch.no_grad():
+                # 1. Input-Level Anomaly Detection (Statistical Outliers)
+                # Relaxed to 6 sigma for robust "Safe but Noisy" data acceptance
+                z_scores = (batch_data - ref_mean) / (ref_std + 1e-6)
+                input_outliers = (z_scores.abs() > 6.0).any(dim=1)
+                
+                # 2. Embedding-Level Anomaly Detection (Semantic Outliers)
+                embeddings = encoder(batch_data)
+                embeddings = torch.nn.functional.normalize(embeddings, dim=1)
+                
+                # Metrics
+                rank = calculate_effective_rank(embeddings)
+                density = float(embeddings.std().item()) 
+                
+                # KNN: Distance to Nearest Anchor
+                sim_matrix = torch.matmul(embeddings, anchor_embeddings.T)
+                max_sims, _ = sim_matrix.max(dim=1)
+                scores = 1.0 - max_sims
+                
+                # Check Threshold
+                embedding_outliers = (scores > dynamic_threshold)
+                
+                # Combined Decision
+                row_is_poison_tensor = input_outliers | embedding_outliers
+                row_is_poison = row_is_poison_tensor.tolist()
+                
+                # DEBUG stats
+                avg_score = float(scores.mean().item())
+                input_fails = input_outliers.sum().item()
+                emb_fails = embedding_outliers.sum().item()
+                print(f"[BATCH {state['batch']}] Dist: {avg_score:.3f} | Thresh: {dynamic_threshold:.3f} | Poison: {sum(row_is_poison)} (Input:{input_fails}, Emb:{emb_fails})", flush=True)
+
+            # Track individual row results
+            poison_count_in_batch = 0
+            for i, is_poison in enumerate(row_is_poison):
+                global_idx = batch_start_idx + i
+                if is_poison:
+                    monitoring_results["poison_indices"].append(global_idx)
+                    monitoring_results["poison_count"] += 1
+                    poison_count_in_batch += 1
+                else:
+                    monitoring_results["clean_indices"].append(global_idx)
+                    monitoring_results["clean_count"] += 1
+            
+            # Batch classification & Metrics
+            is_batch_poisoned = poison_count_in_batch > 0
+            
+            # Logic Update: Cumulative Drift Calculation
+            # Instead of instantaneous 0.9/0.6/0.1, use the actual cumulative poison rate.
+            total_processed = monitoring_results["clean_count"] + monitoring_results["poison_count"]
+            poison_rate = monitoring_results["poison_count"] / max(1, total_processed)
+            
+            # Map Rate to Drift Score (Scaling factor 1.2 to be responsive)
+            drift = 0.1 + (poison_rate * 0.85)
+            drift = min(0.95, drift)
+            
+            if is_batch_poisoned:
+                poisoned_batches.append(state["batch"])
+            else:
+                clean_batches.append(state["batch"])
+                
+            metric_data = {
+                "dataset": data_source,
+                "batch": state["batch"],
+                "total_batches": total_batches,
+                "effective_rank": rank,
+                "density": density,
+                "drift_score": drift,
+                "action": "POISON" if is_batch_poisoned else "CLEAN",
+                "timestamp": "now",
+                "is_poisoned": is_batch_poisoned,
+                "poison_count": poison_count_in_batch,
+                "batch_size": batch_rows,
+                "total_poison": monitoring_results["poison_count"],
+                "total_clean": monitoring_results["clean_count"]
+            }
+            
+            await manager.broadcast({
+                "type": "metrics",
+                "data": metric_data
+            })
+            
+            # Rate limit
+            await asyncio.sleep(state["speed"])
+        
+        # Complete
+        monitoring_results["complete"] = True
+        state["training"] = False
+        state["status"] = "COMPLETE"
+        
+        # Save files
+        scan_id = monitoring_results["scan_id"]
+        clean_indices = monitoring_results["clean_indices"]
+        poison_indices = monitoring_results["poison_indices"]
+        
+        if streaming_data.get("tensor") is not None:
+            os.makedirs("downloads", exist_ok=True)
+            np.save(os.path.join("downloads", f"{scan_id}_clean_indices.npy"), np.array(clean_indices))
+            np.save(os.path.join("downloads", f"{scan_id}_poison_indices.npy"), np.array(poison_indices))
+            print(f"[STREAM] Saved indices - Clean: {len(clean_indices)}, Poison: {len(poison_indices)}", flush=True)
+        
+        await manager.broadcast({
+            "type": "complete",
+            "data": {
+                "scan_id": scan_id,
+                "clean_count": len(clean_indices),
+                "poison_count": len(poison_indices),
+                "message": f"📊 COMPLETE: {len(clean_indices)} clean, {len(poison_indices)} poisoned rows"
+            }
+        })
+
+    except Exception as e:
+        print(f"Error in monitoring loop: {e}", flush=True)
+        state["training"] = False
+        state["status"] = "ERROR"
+        await manager.broadcast({
+            "type": "event",
+            "data": {"severity": "danger", "message": f"Monitoring Error: {str(e)}", "batch": state.get("batch", 0)}
+        })
 
 # --- API Endpoints ---
 @app.websocket("/ws/metrics")
@@ -553,11 +662,147 @@ async def start_training():
         asyncio.create_task(monitoring_loop())
     return {"status": "started", "state": state}
 
+@app.post("/api/stream/upload")
+async def upload_streaming_data(file: UploadFile = File(...)):
+    print(f"[STREAM] Receiving file for streaming: {file.filename}", flush=True)
+    try:
+        # Load and process data (using consistent logic with scan_dataset)
+        df = await load_dataset_multi_format(file)
+        
+        if 'Diabetes_binary' in df.columns:
+            X = df.drop('Diabetes_binary', axis=1).values
+        else:
+            X = df.values
+            
+        # Ensure input dim
+        if X.shape[1] != INPUT_DIM:
+            if X.shape[1] > INPUT_DIM:
+                X = X[:, :INPUT_DIM]
+            else:
+                padding = np.zeros((X.shape[0], INPUT_DIM - X.shape[1]))
+                X = np.hstack([X, padding])
+        
+        # Scale using the GLOBAL scaler (fit on training data)
+        # This ensures consistent preprocessing.
+        try:
+             X_scaled = scaler.transform(X)
+        except Exception as e:
+             # Fallback if scaler fails (e.g. dimension mismatch despite checks)
+             print(f"[STREAM] Scaler transform failed: {e}. Falling back to manual standardization.", flush=True)
+             X_scaled = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-6)
+
+        X_tensor = torch.FloatTensor(X_scaled)
+        
+        # update global state
+        streaming_data["tensor"] = X_tensor
+        streaming_data["columns"] = list(df.drop('Diabetes_binary', axis=1).columns) if 'Diabetes_binary' in df.columns else list(df.columns)
+        # Store original unscaled values for download
+        streaming_data["original_values"] = X # X is the numpy array before scaling (but after dropping target)
+        streaming_data["filename"] = file.filename
+        streaming_data["total_rows"] = len(X_tensor)
+        
+        # Reset streaming state
+        state["training"] = False
+        state["batch"] = 0
+        state["status"] = "IDLE"
+        
+        print(f"[STREAM] Loaded {len(X_tensor)} rows from {file.filename}", flush=True)
+        return {
+            "status": "loaded", 
+            "filename": file.filename,
+            "rows": len(X_tensor)
+        }
+    except Exception as e:
+        print(f"[STREAM] Error loading file: {e}", flush=True)
+        return {"error": str(e)}
+
 @app.post("/api/training/stop")
 async def stop_training():
     state["training"] = False
     state["status"] = "IDLE"
     return {"status": "stopped", "state": state}
+
+@app.get("/api/monitoring/results")
+def get_monitoring_results():
+    """Get the current monitoring results"""
+    return {
+        "scan_id": monitoring_results["scan_id"],
+        "clean_count": monitoring_results["clean_count"],
+        "poison_count": monitoring_results["poison_count"],
+        "complete": monitoring_results["complete"],
+        "total": monitoring_results["clean_count"] + monitoring_results["poison_count"]
+    }
+
+@app.get("/api/monitoring/download")
+def download_separated_data(type: str, format: str = "csv"):
+    """Download separated clean or poison data from monitoring"""
+    global streaming_data, monitoring_results
+    
+    if not monitoring_results["complete"]:
+        raise HTTPException(status_code=400, detail="Monitoring not complete yet")
+    
+    if type not in ['clean', 'poison']:
+        raise HTTPException(status_code=400, detail="Type must be 'clean' or 'poison'")
+    
+    # Get the indices
+    indices = monitoring_results["clean_indices"] if type == "clean" else monitoring_results["poison_indices"]
+    
+    if len(indices) == 0:
+        raise HTTPException(status_code=404, detail=f"No {type} data found")
+    
+    # Get original tensor and convert to dataframe
+    if streaming_data["tensor"] is None:
+        raise HTTPException(status_code=400, detail="No uploaded data available")
+    
+    # Create dataframe from tensor
+    tensor = streaming_data["tensor"]
+    data_array = tensor.numpy()
+    
+    # Select only the rows with matching indices
+    # Use ORIGINAL values if available (fallback to tensor if not)
+    if "original_values" in streaming_data:
+        data_source = streaming_data["original_values"]
+        selected_data = data_source[indices]
+    else:
+        selected_data = data_array[indices]
+    
+    # Create DataFrame
+    # Create DataFrame
+    columns = streaming_data.get("columns", [f"feature_{i}" for i in range(selected_data.shape[1])])
+    # Ensure column count matches data (in case padding was used or mismatch)
+    if len(columns) != selected_data.shape[1]:
+        columns = [f"feature_{i}" for i in range(selected_data.shape[1])]
+        
+    df = pd.DataFrame(selected_data, columns=columns)
+    
+    # Add status column
+    df['_status'] = type.upper()
+    
+    # Save in requested format
+    os.makedirs("downloads", exist_ok=True)
+    scan_id = monitoring_results["scan_id"]
+    
+    format = format.lower()
+    if format not in ["csv", "json", "xlsx", "parquet"]:
+        format = "csv"
+    
+    filename = f"logicloopers_{type}_{scan_id}.{format}"
+    file_path = os.path.join("downloads", filename)
+    
+    if format == "csv":
+        df.to_csv(file_path, index=False)
+    elif format == "json":
+        df.to_json(file_path, orient="records", indent=2)
+    elif format == "xlsx":
+        df.to_excel(file_path, index=False)
+    elif format == "parquet":
+        df.to_parquet(file_path, index=False)
+    
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type='application/octet-stream'
+    )
 
 @app.post("/api/training/inject")
 async def inject_poison():
