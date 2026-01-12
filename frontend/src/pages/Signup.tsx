@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Lock, User, UserPlus, Shield } from 'lucide-react';
 
+import { API_BASE } from '../services/api';
+
 export function Signup() {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -23,7 +25,7 @@ export function Signup() {
         setIsLoading(true);
 
         try {
-            const response = await fetch('http://localhost:8000/api/auth/register', {
+            const response = await fetch(`${API_BASE}/api/auth/register`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password }),
