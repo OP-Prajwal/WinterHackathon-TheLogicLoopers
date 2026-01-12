@@ -152,10 +152,23 @@ export const Dashboard: React.FC = () => {
                 </div>
             </div>
 
-            {/* Bottom Row: Operations Tools */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <ManualTest />
-                <PurificationPanel />
+            import {MetricsPanel} from '../components/dashboard/MetricsPanel';
+
+            // ... (existing imports)
+
+            // ... (inside component)
+
+            {/* Bottom Row: Operations Tools & Realtime Metrics */}
+            <div className="flex flex-col gap-6">
+                {/* Realtime Metrics Panel (New) */}
+                <div className="h-[500px]">
+                    <MetricsPanel />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <ManualTest />
+                    <PurificationPanel />
+                </div>
             </div>
         </div>
     );

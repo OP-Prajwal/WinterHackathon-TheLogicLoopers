@@ -26,6 +26,28 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 # Import model components
 from poison_guard.models.encoders.tabular_mlp import TabularMLPEncoder
 from poison_guard.models.heads.mlp import ProjectionHead
+from metrics import MetricTracker
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except:
+                pass
+
+manager = ConnectionManager()
+tracker = MetricTracker()
 
 app = FastAPI(title="Poison Guard API", version="0.1.0")
 
@@ -432,6 +454,28 @@ async def scan_dataset(
                 threshold = 150.0 
                 is_poison_batch = (norms > threshold).bool().tolist()
                 
+                # Calculate batch metrics
+                batch_poison_count = is_poison_batch.count(True)
+                batch_safe_count = batch_size - batch_poison_count
+                
+                # Calculate simple "Drift Score" (e.g., avg norm of batch)
+                avg_norm = norms.mean().item()
+                
+                # Verify tracker existence just in case, though global
+                if 'tracker' in globals():
+                    tracker.update(batch_size=len(batch), 
+                                  poison_count=batch_poison_count, 
+                                  safe_count=batch_safe_count, 
+                                  avg_drift_score=avg_norm)
+                                  
+                    # Broadcast stats
+                    stats = tracker.get_stats()
+                    asyncio.run_coroutine_threadsafe(manager.broadcast(stats), asyncio.get_event_loop())
+                
+                # Artificial delay for "Mind Blowing" visualization effect 
+                # (Otherwise it finishes too fast to see the cool charts)
+                await asyncio.sleep(0.05)
+
                 for is_p in is_poison_batch:
                     if is_p:
                         dataset_status.append("POISON")
@@ -469,6 +513,18 @@ async def scan_dataset(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/metrics")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep alive / or handle client messages if needed
+            # For now just wait
+            await websocket.receive_text() 
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 
 @app.get("/api/dataset/export")
 async def export_dataset(scan_id: str, type: str, format: str):
