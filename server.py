@@ -619,7 +619,7 @@ async def get_settings():
 @app.post("/api/settings/speed")
 async def set_speed(value: float):
     """Set simulation delay in seconds (0.1 to 5.0)"""
-    new_val = max(0.05, min(5.0, value))
+    new_val = max(0.001, min(5.0, value))
     state["speed"] = new_val
     await update_setting_db("speed", new_val)
     print(f"[SETTINGS] Speed set to: {state['speed']}s delay", flush=True)
