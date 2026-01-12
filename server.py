@@ -30,6 +30,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 # Import model components
 from poison_guard.models.encoders.tabular_mlp import TabularMLPEncoder
 from poison_guard.models.heads.mlp import ProjectionHead
+from poison_guard.db import connect_to_mongo, close_mongo_connection, get_database
+from poison_guard.auth import get_password_hash, verify_password, create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
+from datetime import timedelta, datetime
 
 app = FastAPI(title="Poison Guard API", version="0.1.0")
 
@@ -385,9 +388,49 @@ def download_file(filename: str):
     return {"error": "File not found"}
 
 # --- Settings Endpoints ---
+# --- Settings Persistence ---
+async def get_settings_from_db():
+    db = get_database()
+    settings = await db.settings.find_one({"_id": "global_config"})
+    if not settings:
+        # Defaults
+        settings = {
+            "_id": "global_config",
+            "strict_mode": True,
+            "sensitivity": 1.0,
+            "speed": 1.0,
+            "halted": False,
+            "status": "IDLE"
+        }
+        await db.settings.insert_one(settings)
+    
+    # Update global state
+    state["strict_mode"] = settings.get("strict_mode", True)
+    state["sensitivity"] = settings.get("sensitivity", 1.0)
+    state["speed"] = settings.get("speed", 1.0)
+    # state["halted"] = settings.get("halted", False) # Don't persist halted state across restarts usually? Let's say yes.
+    # state["status"] = "IDLE" # Always idle on restart
+    return settings
+
+async def update_setting_db(key: str, value):
+    db = get_database()
+    await db.settings.update_one(
+        {"_id": "global_config"},
+        {"$set": {key: value}},
+        upsert=True
+    )
+
+@app.on_event("startup")
+async def startup_event():
+    await connect_to_mongo()
+    await get_settings_from_db()
+    print("Locked & Loaded: Settings synced from DB.", flush=True)
+
+# --- Settings Endpoints ---
 @app.get("/api/settings")
-def get_settings():
+async def get_settings():
     """Get current system settings"""
+    # Refresh from DB? Or trust state? Trust state for speed, but startup verified.
     return {
         "strict_mode": state["strict_mode"],
         "halted": state["halted"],
@@ -397,31 +440,37 @@ def get_settings():
     }
 
 @app.post("/api/settings/speed")
-def set_speed(value: float):
+async def set_speed(value: float):
     """Set simulation delay in seconds (0.1 to 5.0)"""
-    state["speed"] = max(0.05, min(5.0, value))
+    new_val = max(0.05, min(5.0, value))
+    state["speed"] = new_val
+    await update_setting_db("speed", new_val)
     print(f"[SETTINGS] Speed set to: {state['speed']}s delay", flush=True)
     return {"speed": state["speed"]}
 
 @app.post("/api/settings/sensitivity")
-def set_sensitivity(value: float):
+async def set_sensitivity(value: float):
     """Set detection sensitivity (0.1 to 3.0)"""
-    state["sensitivity"] = max(0.1, min(3.0, value))
+    new_val = max(0.1, min(3.0, value))
+    state["sensitivity"] = new_val
+    await update_setting_db("sensitivity", new_val)
     print(f"[SETTINGS] Sensitivity set to: {state['sensitivity']}", flush=True)
     return {"sensitivity": state["sensitivity"]}
 
 @app.post("/api/settings/strict-mode")
-def set_strict_mode(enabled: bool = True):
+async def set_strict_mode(enabled: bool = True):
     """Toggle strict mode on/off"""
     state["strict_mode"] = enabled
+    await update_setting_db("strict_mode", enabled)
     print(f"[SETTINGS] Strict Mode set to: {enabled}", flush=True)
     return {"strict_mode": state["strict_mode"]}
 
 @app.post("/api/settings/reset-halt")
-def reset_halt():
+async def reset_halt():
     """Reset system from halted state"""
     state["halted"] = False
     state["status"] = "IDLE"
+    await update_setting_db("halted", False)
     print("[SETTINGS] System HALT reset", flush=True)
     return {"halted": False, "status": "IDLE"}
 
@@ -443,6 +492,15 @@ async def stop_training():
 @app.post("/api/training/inject")
 async def inject_poison():
     state["poisoned"] = not state["poisoned"]
+    # Log injection event?
+    if state["poisoned"]:
+        # Log to DB
+        db = get_database()
+        await db.system_events.insert_one({
+            "type": "ATTACK_SIMULATION",
+            "message": "Poison injection manually toggled ON",
+            "timestamp": datetime.utcnow()
+        })
     return {"status": "toggled", "poisoned": state["poisoned"]}
 
 
@@ -551,15 +609,17 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
         batch_size = 256
         dataset_status = [] # List of strings: "SAFE" or "POISON"
         
+        # Use dynamic sensitivity from DB/State
+        dynamic_threshold = 150.0 * state.get("sensitivity", 1.0)
+        
         with torch.no_grad():
             for i in range(0, len(X_tensor), batch_size):
                 batch = X_tensor[i:i+batch_size]
                 embeddings = encoder(batch)
                 norms = torch.norm(embeddings, dim=1)
                 
-                # Check anomaly again (Using logic from feat/multi-format-io which seems updated/consistent)
-                threshold = 150.0 
-                is_poison_batch = (norms > threshold).bool().tolist()
+                # Check anomaly again 
+                is_poison_batch = (norms > dynamic_threshold).bool().tolist()
                 
                 # Calculate batch metrics
                 batch_poison_count = is_poison_batch.count(True)
@@ -568,23 +628,21 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
                 # Calculate simple "Drift Score" (e.g., avg norm of batch)
                 avg_norm = norms.mean().item()
                 
-                # Verify tracker existence just in case, though global
-                if 'tracker' in globals():
-                    tracker.update(batch_size=len(batch), 
-                                  poison_count=batch_poison_count, 
-                                  safe_count=batch_safe_count, 
-                                  avg_drift_score=avg_norm)
-                                  
-                    # Broadcast stats (Wrapped in type)
-                    stats = tracker.get_stats()
-                    asyncio.run_coroutine_threadsafe(manager.broadcast({
-                        "type": "scan_metrics",
-                        "data": stats
-                    }), asyncio.get_event_loop())
+                # Broadcast stats IF monitoring is active, or just for fun?
+                # Maybe only if 'training' is True? Or always?
+                # Let's broadcast "scan_progress"
+                if len(manager.active_connections) > 0:
+                     asyncio.create_task(manager.broadcast({
+                        "type": "scan_progress",
+                        "data": {
+                            "processed": i + len(batch),
+                            "total": len(X_tensor),
+                            "poison_found": poison_count + batch_poison_count
+                        }
+                    }))
                 
-                # Artificial delay for "Mind Blowing" visualization effect 
-                # (Otherwise it finishes too fast to see the cool charts)
-                await asyncio.sleep(0.05)
+                # Artificial delay for UI effect
+                await asyncio.sleep(0.01)
 
                 for is_p in is_poison_batch:
                     if is_p:
@@ -600,7 +658,7 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
         poison_df = df[df['_status'] == 'POISON'].drop(columns=['_status'])
         safe_df = df[df['_status'] == 'SAFE'].drop(columns=['_status'])
         
-        # Save to files (Local Storage for download) - Preserving structure from HEAD for frontend compatibility
+        # Save to files (Local Storage for download)
         import uuid
         scan_id = str(uuid.uuid4())[:8]
         poison_filename = f"poison_{scan_id}.csv"
@@ -613,12 +671,12 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
         poison_df.to_csv(poison_path, index=False)
         safe_df.to_csv(safe_path, index=False)
         
-        # Also save Parquet backups for the new export feature (from feat/multi-format-io)
+        # Also save Parquet backups 
         os.makedirs(TEMP_SCAN_DIR, exist_ok=True)
         safe_df.to_parquet(os.path.join(TEMP_SCAN_DIR, f"{scan_id}_safe.parquet"), index=False)
         poison_df.to_parquet(os.path.join(TEMP_SCAN_DIR, f"{scan_id}_poison.parquet"), index=False)
 
-        # --- MongoDB Storage --- (From HEAD)
+        # --- MongoDB Storage --- 
         scan_record = {
             "scan_id": scan_id,
             "filename": file.filename,
@@ -628,7 +686,8 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
             "poison_count": poison_count,
             "safe_count": safe_count,
             "poison_file_path": poison_path,
-            "safe_file_path": safe_path
+            "safe_file_path": safe_path,
+            "sensitivity_used": state.get("sensitivity", 1.0)
         }
         
         db = get_database()
@@ -712,7 +771,7 @@ async def get_scans(current_user: dict = Depends(get_current_user)):
     return results
 
 @app.post("/api/check")
-def check_sample(req: CheckRequest):
+async def check_sample(req: CheckRequest):
     """
     Analyze patient description using LLM-based parsing.
     No hardcoded keywords - uses AI to understand natural language.
@@ -814,7 +873,7 @@ def check_sample(req: CheckRequest):
     else:
         verdict = "✅ Data point appears normal and within expected ranges."
     
-    return {
+    response_data = {
         "result": {
             "action": "HALT" if is_poison else "SAFE",
             "total_score": score,
@@ -832,6 +891,25 @@ def check_sample(req: CheckRequest):
         "parsed_data": parsed,
         "raw_text": text
     }
+
+    # --- Audit Log ---
+    try:
+        db = get_database()
+        await db.audit_logs.insert_one({
+            "timestamp": datetime.utcnow(),
+            "input_text": text,
+            "parsed": parsed,
+            "result": {
+                 "is_poison": is_poison,
+                 "score": score,
+                 "verdict": verdict
+            },
+            "source_ip": "unknown"
+        })
+    except Exception as e:
+        print(f"Failed to write audit log: {e}")
+
+    return response_data
 
 # Ensure DEFAULT_CLEAN is defined or dummy
 DEFAULT_CLEAN = {k:0.0 for k in range(INPUT_DIM)} 
