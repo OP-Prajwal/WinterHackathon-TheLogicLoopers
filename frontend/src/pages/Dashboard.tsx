@@ -2,6 +2,8 @@ import React from 'react';
 import { Activity, ShieldCheck, AlertTriangle, Database } from 'lucide-react';
 import MetricCard from '../components/metrics/MetricCard';
 import EffectiveRankChart from '../components/metrics/EffectiveRankChart';
+import ControlPanel from '../components/dashboard/ControlPanel';
+import EventLog from '../components/dashboard/EventLog';
 
 const Dashboard: React.FC = () => {
     return (
@@ -67,6 +69,11 @@ const Dashboard: React.FC = () => {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+                <ControlPanel />
+                <EventLog />
             </div>
         </div>
     );
