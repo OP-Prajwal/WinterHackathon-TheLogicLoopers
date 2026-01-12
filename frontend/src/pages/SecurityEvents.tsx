@@ -103,7 +103,13 @@ export function SecurityEvents() {
                     <tbody className="divide-y divide-gray-700 text-gray-300">
                         {scans.map((scan) => (
                             <tr key={scan._id} className="hover:bg-gray-750 transition-colors">
-                                <td className="p-4">{new Date(scan.timestamp).toLocaleString()}</td>
+                                <td className="p-4">
+                                    {new Date(scan.timestamp).toLocaleString('en-IN', {
+                                        timeZone: 'Asia/Kolkata',
+                                        dateStyle: 'medium',
+                                        timeStyle: 'medium'
+                                    })}
+                                </td>
                                 <td className="p-4 font-mono text-sm text-blue-400">{scan.scan_id}</td>
                                 <td className="p-4">{scan.filename}</td>
                                 <td className="p-4">

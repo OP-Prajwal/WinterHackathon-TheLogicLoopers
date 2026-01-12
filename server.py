@@ -32,7 +32,7 @@ from poison_guard.models.encoders.tabular_mlp import TabularMLPEncoder
 from poison_guard.models.heads.mlp import ProjectionHead
 from poison_guard.db import connect_to_mongo, close_mongo_connection, get_database
 from poison_guard.auth import get_password_hash, verify_password, create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 
 app = FastAPI(title="Poison Guard API", version="0.1.0")
 
@@ -601,7 +601,7 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
             "scan_id": scan_id,
             "filename": file.filename,
             "uploaded_by": current_user['username'],
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(timezone.utc),
             "total_rows": len(df),
             "poison_count": poison_count,
             "safe_count": safe_count,
@@ -673,6 +673,9 @@ async def get_scans(current_user: dict = Depends(get_current_user)):
     results = []
     for scan in scans:
         scan["_id"] = str(scan["_id"])
+        # Ensure timestamp is timezone aware (UTC) for correct JSON serialization
+        if scan.get("timestamp") and scan["timestamp"].tzinfo is None:
+             scan["timestamp"] = scan["timestamp"].replace(tzinfo=timezone.utc)
         results.append(scan)
         
     return results

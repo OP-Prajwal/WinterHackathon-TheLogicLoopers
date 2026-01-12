@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, AlertOctagon, Loader2, Database, FileSpreadsheet, FileJson, FileText, Download, ChevronDown, Check } from 'lucide-react';
 import clsx from 'clsx';
+import { API_BASE } from '../../services/api';
 
 interface ScanResult {
     status: string;
@@ -43,8 +44,12 @@ export const PurificationPanel: React.FC = () => {
         // Note: We no longer send format here.
 
         try {
-            const response = await fetch('http://localhost:8003/api/dataset/scan', {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${API_BASE}/api/dataset/scan`, {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
                 body: formData,
             });
             const data = await response.json();
@@ -66,7 +71,8 @@ export const PurificationPanel: React.FC = () => {
             const format = exportFormat;
 
             // Trigger download via new endpoint
-            const url = `http://localhost:8003/api/dataset/export?scan_id=${scan_id}&type=${type}&format=${format}`;
+            // Trigger download via new endpoint
+            const url = `${API_BASE}/api/dataset/export?scan_id=${scan_id}&type=${type}&format=${format}`;
 
             // We can just open this URL, but strictly better to fetch blob if we want name control
             // Or just window.open(url) works for GET download file
