@@ -103,38 +103,52 @@ python -m venv venv
 venv\Scripts\activate
 # Linux/Mac
 source venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
-### 3️⃣ Configure API Key (Important!)
+### 3️⃣ Configure Environment Variables
 
-Create a `.env` file in the root directory and add your Google Gemini API Key:
+Create a `.env` file in the root directory (or rename `.env.example`).
+**Required Variables:**
 
 ```env
+# Google Gemini API Key (for LLM Validator)
 GEMINI_API_KEY=your-api-key-here
 
+# MongoDB Connection (for GridFS & Settings)
+# Example: mongodb://localhost:27017 or your Atlas URL
+MONGO_URL=mongodb+srv://<user>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority
 
-### 4️⃣ Start the System
-
-**Backend:**
-```bash
-uvicorn server:app --host 0.0.0.0 --port 8002 --reload
+# JWT Secret (for Authentication)
+SECRET_KEY=your-secret-key-change-me
 ```
 
-**Frontend:**
+### 4️⃣ Start the Backend
+
+The server runs on port **8000** (Documentation: http://localhost:8000/docs).
+
+```bash
+# Make sure venv is active
+uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 5️⃣ Start the Frontend
+
+Open a new terminal:
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-### 5️⃣ Run the Defense System
+### 6️⃣ Run the Defense System
 
-The defense logic is primarily real-time (inference firewall). To validate it:
-
-1.  **Start the Server:** `uvicorn server:app --host 0.0.0.0 --port 8002`
-2.  **Open the Dashboard:** Go to http://localhost:5173
-3.  **Run the Judge's Test:** Enter a contradictory prompt (e.g., "Active athlete in a wheelchair") in the dashboard to see the LLM Validator in action.
+1.  **Dashboard:** Open http://localhost:5173
+2.  **Login/Register:** Create an account to access the dashboard.
+3.  **Upload & Scan:** Go to the dashboard, upload a dataset (CSV/Parquet), and watch the real-time metrics.
+4.  **Test Logic:** Use the "Judge's Test" feature to validate natural language inputs with Gemini.
 
 ---
 
