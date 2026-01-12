@@ -185,13 +185,31 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# --- Global storage for monitoring results ---
+monitoring_results = {
+    "scan_id": None,
+    "clean_indices": [],
+    "poison_indices": [],
+    "clean_count": 0,
+    "poison_count": 0,
+    "complete": False
+}
+
 # --- Monitoring/Prediction Loop ---
 async def monitoring_loop():
-    global state, streaming_data
+    global state, streaming_data, monitoring_results
     batch_size = 10  # Process 10 rows at a time
     
-    # Reset batch counter at start
+    # Reset batch counter and results at start
     state["batch"] = 0
+    monitoring_results = {
+        "scan_id": str(uuid.uuid4())[:8],
+        "clean_indices": [],
+        "poison_indices": [],
+        "clean_count": 0,
+        "poison_count": 0,
+        "complete": False
+    }
     
     # Use uploaded data if available, otherwise use pre-loaded data
     if streaming_data["tensor"] is not None:
@@ -207,14 +225,25 @@ async def monitoring_loop():
     total_batches = (total_samples + batch_size - 1) // batch_size  # Ceiling division
     idx = 0
     
-    # Track results
+    # Track batch results
     poisoned_batches = []
     clean_batches = []
     
+    # First pass: calculate baseline statistics from first batch for calibration
+    with torch.no_grad():
+        sample_embeddings = encoder(data_tensor[:min(50, total_samples)])
+        sample_norms = torch.norm(sample_embeddings, dim=1)
+        baseline_mean = float(sample_norms.mean().item())
+        baseline_std = float(sample_norms.std().item())
+        # Threshold: mean + 2*std (captures outliers)
+        dynamic_threshold = baseline_mean + 2.0 * max(baseline_std, 1.0)
+    
     print(f"[STREAM] Total: {total_samples} rows = {total_batches} batches", flush=True)
+    print(f"[STREAM] Detection threshold: {dynamic_threshold:.2f} (mean={baseline_mean:.2f}, std={baseline_std:.2f})", flush=True)
     
     while state["training"] and idx < total_samples:
         state["batch"] += 1
+        batch_start_idx = idx
         
         # Get Batch of 10 rows from Data
         next_idx = min(idx + batch_size, total_samples)
@@ -228,24 +257,34 @@ async def monitoring_loop():
             rank = calculate_effective_rank(embeddings)
             density = float(embeddings.std().item())
             
-            # Calculate embedding norms to detect anomalies
+            # Calculate embedding norms to detect anomalies per row
             norms = torch.norm(embeddings, dim=1)
-            avg_norm = float(norms.mean().item())
-            max_norm = float(norms.max().item())
+            
+            # Per-row classification
+            row_is_poison = (norms > dynamic_threshold).tolist()
+            
+        # Track individual row results
+        poison_count_in_batch = 0
+        for i, is_poison in enumerate(row_is_poison):
+            global_idx = batch_start_idx + i
+            if is_poison:
+                monitoring_results["poison_indices"].append(global_idx)
+                monitoring_results["poison_count"] += 1
+                poison_count_in_batch += 1
+            else:
+                monitoring_results["clean_indices"].append(global_idx)
+                monitoring_results["clean_count"] += 1
         
-        # Poison detection based on embedding characteristics
-        # High norms or low rank indicate potential poisoned data
-        threshold = 150.0  # Same threshold as scan endpoint
-        poison_count_in_batch = int((norms > threshold).sum().item())
-        is_batch_poisoned = poison_count_in_batch > (batch_rows // 2)  # More than half poisoned
+        # Batch classification
+        is_batch_poisoned = poison_count_in_batch > 0
         
         # Calculate drift score based on actual detection
-        if is_batch_poisoned:
+        if poison_count_in_batch > batch_rows // 2:
             drift = 0.9
             poisoned_batches.append(state["batch"])
-        elif avg_norm > 100:
-            drift = 0.5
-            clean_batches.append(state["batch"])
+        elif poison_count_in_batch > 0:
+            drift = 0.6
+            poisoned_batches.append(state["batch"])
         else:
             drift = 0.1
             clean_batches.append(state["batch"])
@@ -261,7 +300,9 @@ async def monitoring_loop():
             "timestamp": "now",
             "is_poisoned": is_batch_poisoned,
             "poison_count": poison_count_in_batch,
-            "batch_size": batch_rows
+            "batch_size": batch_rows,
+            "total_poison": monitoring_results["poison_count"],
+            "total_clean": monitoring_results["clean_count"]
         }
         
         await manager.broadcast({
@@ -275,7 +316,7 @@ async def monitoring_loop():
                 "type": "event",
                 "data": {
                     "severity": "danger",
-                    "message": f"🚨 Batch {state['batch']}/{total_batches}: POISONED ({poison_count_in_batch}/{batch_rows} rows)",
+                    "message": f"🚨 Batch {state['batch']}/{total_batches}: {poison_count_in_batch} POISONED rows found",
                     "batch": state['batch']
                 }
             })
@@ -284,27 +325,55 @@ async def monitoring_loop():
                 "type": "event",
                 "data": {
                     "severity": "info",
-                    "message": f"✅ Batch {state['batch']}/{total_batches}: CLEAN",
+                    "message": f"✅ Batch {state['batch']}/{total_batches}: ALL CLEAN",
                     "batch": state['batch']
                 }
             })
         
         await asyncio.sleep(state["speed"])
     
-    # Monitoring complete - show summary
+    # Monitoring complete - save separated data
+    monitoring_results["complete"] = True
     state["training"] = False
     state["status"] = "COMPLETE"
+    
+    # Save clean and poison data to files
+    scan_id = monitoring_results["scan_id"]
+    clean_indices = monitoring_results["clean_indices"]
+    poison_indices = monitoring_results["poison_indices"]
+    
+    # Get original dataframe from streaming data
+    if streaming_data["tensor"] is not None:
+        # Reconstruct indices to save
+        os.makedirs("downloads", exist_ok=True)
+        
+        # Save as numpy arrays (indices)
+        np.save(os.path.join("downloads", f"{scan_id}_clean_indices.npy"), np.array(clean_indices))
+        np.save(os.path.join("downloads", f"{scan_id}_poison_indices.npy"), np.array(poison_indices))
+        
+        print(f"[STREAM] Saved indices - Clean: {len(clean_indices)}, Poison: {len(poison_indices)}", flush=True)
+    
+    # Broadcast completion with download info
+    await manager.broadcast({
+        "type": "complete",
+        "data": {
+            "scan_id": scan_id,
+            "clean_count": len(clean_indices),
+            "poison_count": len(poison_indices),
+            "message": f"📊 COMPLETE: {len(clean_indices)} clean, {len(poison_indices)} poisoned rows"
+        }
+    })
     
     await manager.broadcast({
         "type": "event",
         "data": {
             "severity": "warning",
-            "message": f"📊 COMPLETE: {len(clean_batches)} clean, {len(poisoned_batches)} poisoned batches",
+            "message": f"📊 COMPLETE: {len(clean_indices)} clean, {len(poison_indices)} poisoned rows",
             "batch": state['batch']
         }
     })
     
-    print(f"[STREAM] Complete - Clean: {clean_batches}, Poisoned: {poisoned_batches}", flush=True)
+    print(f"[STREAM] Complete - Clean: {len(clean_indices)}, Poisoned: {len(poison_indices)}", flush=True)
 
 # --- API Endpoints ---
 @app.websocket("/ws/metrics")
@@ -494,6 +563,78 @@ async def stop_training():
     state["training"] = False
     state["status"] = "IDLE"
     return {"status": "stopped", "state": state}
+
+@app.get("/api/monitoring/results")
+def get_monitoring_results():
+    """Get the current monitoring results"""
+    return {
+        "scan_id": monitoring_results["scan_id"],
+        "clean_count": monitoring_results["clean_count"],
+        "poison_count": monitoring_results["poison_count"],
+        "complete": monitoring_results["complete"],
+        "total": monitoring_results["clean_count"] + monitoring_results["poison_count"]
+    }
+
+@app.get("/api/monitoring/download")
+def download_separated_data(type: str, format: str = "csv"):
+    """Download separated clean or poison data from monitoring"""
+    global streaming_data, monitoring_results
+    
+    if not monitoring_results["complete"]:
+        raise HTTPException(status_code=400, detail="Monitoring not complete yet")
+    
+    if type not in ['clean', 'poison']:
+        raise HTTPException(status_code=400, detail="Type must be 'clean' or 'poison'")
+    
+    # Get the indices
+    indices = monitoring_results["clean_indices"] if type == "clean" else monitoring_results["poison_indices"]
+    
+    if len(indices) == 0:
+        raise HTTPException(status_code=404, detail=f"No {type} data found")
+    
+    # Get original tensor and convert to dataframe
+    if streaming_data["tensor"] is None:
+        raise HTTPException(status_code=400, detail="No uploaded data available")
+    
+    # Create dataframe from tensor
+    tensor = streaming_data["tensor"]
+    data_array = tensor.numpy()
+    
+    # Select only the rows with matching indices
+    selected_data = data_array[indices]
+    
+    # Create DataFrame
+    columns = [f"feature_{i}" for i in range(selected_data.shape[1])]
+    df = pd.DataFrame(selected_data, columns=columns)
+    
+    # Add status column
+    df['_status'] = type.upper()
+    
+    # Save in requested format
+    os.makedirs("downloads", exist_ok=True)
+    scan_id = monitoring_results["scan_id"]
+    
+    format = format.lower()
+    if format not in ["csv", "json", "xlsx", "parquet"]:
+        format = "csv"
+    
+    filename = f"logicloopers_{type}_{scan_id}.{format}"
+    file_path = os.path.join("downloads", filename)
+    
+    if format == "csv":
+        df.to_csv(file_path, index=False)
+    elif format == "json":
+        df.to_json(file_path, orient="records", indent=2)
+    elif format == "xlsx":
+        df.to_excel(file_path, index=False)
+    elif format == "parquet":
+        df.to_parquet(file_path, index=False)
+    
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type='application/octet-stream'
+    )
 
 @app.post("/api/training/inject")
 async def inject_poison():

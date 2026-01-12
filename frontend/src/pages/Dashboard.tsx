@@ -4,17 +4,18 @@ import { MetricCard } from '../components/metrics/MetricCard';
 import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
 import { EventLog } from '../components/dashboard/EventLog';
 import { ManualTest } from '../components/dashboard/ManualTest';
-import { PurificationPanel } from '../components/dashboard/PurificationPanel';
+import { MonitoringResults } from '../components/dashboard/MonitoringResults';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { DataImport } from '../components/dashboard/DataImport';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
 import { api } from '../services/api';
 
 export const Dashboard: React.FC = () => {
-    const { metrics, events } = usePoisonGuardSocket();
+    const { metrics, events, result } = usePoisonGuardSocket();
     const [history, setHistory] = useState<MetricsData[]>([]);
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [loadedData, setLoadedData] = useState<{ filename: string; rows: number } | null>(null);
+    const [showResults, setShowResults] = useState(false);
 
     // Sync state with metrics for the chart
     useEffect(() => {
@@ -23,10 +24,19 @@ export const Dashboard: React.FC = () => {
         }
     }, [metrics]);
 
+    // Show results when ready
+    useEffect(() => {
+        if (result) {
+            setShowResults(true);
+            setIsMonitoring(false);
+        }
+    }, [result]);
+
     const handleStart = async () => {
         try {
             await api.startMonitoring();
             setIsMonitoring(true);
+            setShowResults(false);
         } catch (e) {
             console.error(e);
         }
@@ -41,12 +51,11 @@ export const Dashboard: React.FC = () => {
         }
     };
 
-
-
     // Derived values
     const currentRank = metrics?.effective_rank.toFixed(2) ?? '-';
     const density = metrics?.density.toFixed(4) ?? '-';
-    const driftScore = metrics?.drift_score.toFixed(4) ?? '-';
+    const driftScore = metrics?.drift_score.toFixed(4) ?? '-'; // Using fixed(4)
+    const driftValue = metrics?.drift_score ?? 0;
     const batch = metrics?.batch ?? 0;
 
     // Status check for cards
@@ -153,8 +162,17 @@ export const Dashboard: React.FC = () => {
 
             {/* Bottom Row: Text Input & Purification */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <ManualTest />
-                <PurificationPanel />
+                <div className={showResults ? "lg:col-span-1" : "lg:col-span-2 transition-all duration-500"}>
+                    <ManualTest />
+                </div>
+                {showResults && result && (
+                    <MonitoringResults
+                        scanId={result.scan_id}
+                        cleanCount={result.clean_count}
+                        poisonCount={result.poison_count}
+                        onClose={() => setShowResults(false)}
+                    />
+                )}
             </div>
         </div>
     );

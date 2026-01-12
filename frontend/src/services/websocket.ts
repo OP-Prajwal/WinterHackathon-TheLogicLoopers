@@ -19,15 +19,24 @@ export type EventData = {
     batch: number;
 };
 
+export type CompletionData = {
+    scan_id: string;
+    clean_count: number;
+    poison_count: number;
+    message: string;
+};
+
 export type WSMessage =
     | { type: 'connected'; data: any }
     | { type: 'metrics'; data: MetricsData }
-    | { type: 'event'; data: EventData };
+    | { type: 'event'; data: EventData }
+    | { type: 'complete'; data: CompletionData };
 
 export const usePoisonGuardSocket = () => {
     const [isConnected, setIsConnected] = useState(false);
     const [metrics, setMetrics] = useState<MetricsData | null>(null);
     const [events, setEvents] = useState<EventData[]>([]);
+    const [result, setResult] = useState<CompletionData | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
 
     const connect = useCallback(() => {
@@ -54,6 +63,8 @@ export const usePoisonGuardSocket = () => {
                     setMetrics(msg.data);
                 } else if (msg.type === 'event') {
                     setEvents(prev => [msg.data, ...prev].slice(0, 50)); // Keep last 50 events
+                } else if (msg.type === 'complete') {
+                    setResult(msg.data);
                 }
             } catch (e) {
                 console.error('Failed to parse WS message:', e);
@@ -72,9 +83,11 @@ export const usePoisonGuardSocket = () => {
 
     const sendAction = (action: 'start' | 'stop' | 'inject') => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+            // Reset result on start
+            if (action === 'start') setResult(null);
             wsRef.current.send(JSON.stringify({ action }));
         }
     };
 
-    return { isConnected, metrics, events, sendAction };
+    return { isConnected, metrics, events, result, sendAction };
 };
