@@ -12,8 +12,7 @@ interface Dataset {
 }
 
 export const Datasets: React.FC = () => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const [datasets] = useState<Dataset[]>([
+    const [datasets, setDatasets] = useState<Dataset[]>([
         {
             id: '1',
             name: 'Diabetes Binary (BRFSS)',
