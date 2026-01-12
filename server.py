@@ -577,6 +577,9 @@ async def upload_streaming_data(file: UploadFile = File(...)):
         
         # update global state
         streaming_data["tensor"] = X_tensor
+        streaming_data["columns"] = list(df.drop('Diabetes_binary', axis=1).columns) if 'Diabetes_binary' in df.columns else list(df.columns)
+        # Store original unscaled values for download
+        streaming_data["original_values"] = X # X is the numpy array before scaling (but after dropping target)
         streaming_data["filename"] = file.filename
         streaming_data["total_rows"] = len(X_tensor)
         
@@ -638,10 +641,20 @@ def download_separated_data(type: str, format: str = "csv"):
     data_array = tensor.numpy()
     
     # Select only the rows with matching indices
-    selected_data = data_array[indices]
+    # Use ORIGINAL values if available (fallback to tensor if not)
+    if "original_values" in streaming_data:
+        data_source = streaming_data["original_values"]
+        selected_data = data_source[indices]
+    else:
+        selected_data = data_array[indices]
     
     # Create DataFrame
-    columns = [f"feature_{i}" for i in range(selected_data.shape[1])]
+    # Create DataFrame
+    columns = streaming_data.get("columns", [f"feature_{i}" for i in range(selected_data.shape[1])])
+    # Ensure column count matches data (in case padding was used or mismatch)
+    if len(columns) != selected_data.shape[1]:
+        columns = [f"feature_{i}" for i in range(selected_data.shape[1])]
+        
     df = pd.DataFrame(selected_data, columns=columns)
     
     # Add status column
