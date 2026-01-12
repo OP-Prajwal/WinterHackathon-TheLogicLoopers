@@ -10,10 +10,10 @@ interface EventLogProps {
 
 export const EventLog: React.FC<EventLogProps> = ({ events }) => {
     return (
-        <div className="glass-panel p-6 overflow-hidden flex flex-col h-full bg-dark-800/40">
+        <div className="flex flex-col h-full">
             <div className="flex items-center gap-2 mb-4 border-b border-white/5 pb-2">
-                <History size={18} className="text-cyan-400" />
-                <h3 className="text-lg font-bold text-gray-200">Security Event Log</h3>
+                <History size={16} className="text-cyan-400" />
+                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Security Event Log</h3>
             </div>
 
             <div className="flex-1 overflow-y-auto pr-2 max-h-[300px]" style={{ scrollbarWidth: 'thin', scrollbarColor: '#374151 #1f2937' }}>
@@ -26,10 +26,10 @@ export const EventLog: React.FC<EventLogProps> = ({ events }) => {
                                 animate={{ opacity: 1, x: 0, height: 'auto' }}
                                 exit={{ opacity: 0, height: 0 }}
                                 className={clsx(
-                                    "mb-3 p-3 rounded-lg border flex items-start gap-3 text-sm relative overflow-hidden",
-                                    event.severity === 'danger' && "bg-rose-500/10 border-rose-500/30 text-rose-200",
-                                    event.severity === 'warning' && "bg-amber-500/10 border-amber-500/30 text-amber-200",
-                                    event.severity === 'info' && "bg-blue-500/10 border-blue-500/30 text-blue-200"
+                                    "mb-2 p-2.5 rounded-xl border flex items-start gap-3 text-xs relative overflow-hidden transition-colors",
+                                    event.severity === 'danger' && "bg-rose-500/5 border-rose-500/20 text-rose-200",
+                                    event.severity === 'warning' && "bg-amber-500/5 border-amber-500/20 text-amber-200",
+                                    event.severity === 'info' && "bg-cyan-500/5 border-cyan-500/20 text-cyan-200"
                                 )}
                             >
                                 <div className="mt-1 shrink-0">
