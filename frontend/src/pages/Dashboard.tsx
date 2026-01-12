@@ -1,22 +1,23 @@
 import React, { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
 import { usePoisonGuardSocket, type MetricsData } from '../services/websocket';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
 import { EventLog } from '../components/dashboard/EventLog';
-import { ManualTest } from '../components/dashboard/ManualTest';
-import { MonitoringResults } from '../components/dashboard/MonitoringResults';
 import { DataImport } from '../components/dashboard/DataImport';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
 import { NeuralSentinel } from '../components/dashboard/NeuralSentinel';
 import { SecurityAdvisor } from '../components/dashboard/SecurityAdvisor';
+import { HolographicOverlay } from '../components/dashboard/HolographicOverlay';
+import { EnsembleConsensus } from '../components/dashboard/EnsembleConsensus';
 import { api } from '../services/api';
+import clsx from 'clsx';
 
 export const Dashboard: React.FC = () => {
     const { metrics, events, result, clearResult } = usePoisonGuardSocket();
     const [history, setHistory] = useState<MetricsData[]>([]);
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [loadedData, setLoadedData] = useState<{ filename: string; rows: number } | null>(null);
-    const [showResults, setShowResults] = useState(false);
 
     // Sync state with metrics for the chart
     useEffect(() => {
@@ -25,20 +26,10 @@ export const Dashboard: React.FC = () => {
         }
     }, [metrics]);
 
-    // Show results when ready
-    useEffect(() => {
-        if (result) {
-            setShowResults(true);
-            setIsMonitoring(false);
-        }
-    }, [result]);
-
     const handleStart = async () => {
         try {
-            clearResult(); // Reset previous results
             await api.startMonitoring();
             setIsMonitoring(true);
-            setShowResults(false);
         } catch (e) {
             console.error("Start failed:", e);
             alert(`Start failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -66,18 +57,12 @@ export const Dashboard: React.FC = () => {
     const driftStatus = metrics && metrics.drift_score > 0.5 ? 'warning' : 'neutral';
 
     return (
-        <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-8">
-            {/* Data Import Section - TOP */}
+        <div className={clsx(
+            "flex flex-col gap-5 max-w-7xl mx-auto pb-8",
+            (metrics?.drift_score ?? 0) > 0.9 && "animate-glitch"
+        )}>
+            {/* Data Import Section - Re-integrated */}
             <DataImport onDataLoaded={setLoadedData} />
-
-            {/* Header / Controls */}
-            {loadedData && (
-                <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-sm">
-                    <span className="text-gray-400">Ready to process:</span>
-                    <span className="text-cyan-400 font-mono">{loadedData.filename}</span>
-                    <span className="text-gray-500">({loadedData.rows} rows)</span>
-                </div>
-            )}
             <div className="flex items-center justify-between mb-2">
                 <div>
                     <h2 className="text-3xl font-bold text-white tracking-tight">System Dashboard</h2>
@@ -132,6 +117,9 @@ export const Dashboard: React.FC = () => {
                 />
             </div>
 
+
+            <HolographicOverlay active={(metrics?.drift_score ?? 0) > 0.9} />
+
             {/* Main Content Grid - Row 2: Advanced HUD */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Left: Neural Sentinel Radar */}
@@ -163,25 +151,28 @@ export const Dashboard: React.FC = () => {
                 {/* Right: Security Events & advisor */}
                 <div className="lg:col-span-3 flex flex-col gap-6">
                     <SecurityAdvisor metrics={metrics} />
-                    <div className="flex-1 glass-panel p-5 overflow-hidden flex flex-col min-h-[400px]">
+                    <EnsembleConsensus driftScore={metrics?.drift_score ?? 0} />
+                    <div className="flex-1 glass-panel p-5 overflow-hidden flex flex-col min-h-[300px]">
                         <EventLog events={events} />
                     </div>
                 </div>
             </div>
 
-            {/* Bottom Row: Text Input & Purification */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className={showResults ? "lg:col-span-1" : "lg:col-span-2 transition-all duration-500"}>
-                    <ManualTest />
-                </div>
-                {showResults && result && (
-                    <MonitoringResults
-                        scanId={result.scan_id}
-                        cleanCount={result.clean_count}
-                        poisonCount={result.poison_count}
-                        onClose={() => setShowResults(false)}
-                    />
-                )}
+            {/* Bottom Row: Footer is managed by the data stream */}
+
+            {/* Data Stream Footer */}
+            <div className="mt-8 border-t border-white/5 pt-4 overflow-hidden whitespace-nowrap opacity-20 hover:opacity-100 transition-opacity">
+                <motion.div
+                    animate={{ x: [0, -2000] }}
+                    transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
+                    className="flex gap-8 text-[9px] font-mono text-cyan-500 uppercase tracking-[0.3em]"
+                >
+                    {Array.from({ length: 10 }).map((_, i) => (
+                        <span key={i}>
+                            SYSTEM_CORE_INIT // PACKET_INSPECTION_ACTIVE // ADVERSARIAL_DEFENSE_ENGAGED // NEURAL_DRIFT_THRESHOLD: 0.85 // MEM_LOG_0x{(i * 4096).toString(16)} // ENCRYPTION_LAYER_SECURE
+                        </span>
+                    ))}
+                </motion.div>
             </div>
         </div>
     );
