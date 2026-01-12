@@ -7,7 +7,6 @@ import { ManualTest } from '../components/dashboard/ManualTest';
 import { PurificationPanel } from '../components/dashboard/PurificationPanel';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { DataImport } from '../components/dashboard/DataImport';
-import { RealtimeInput } from '../components/dashboard/RealtimeInput';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square, Skull } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -165,11 +164,8 @@ export const Dashboard: React.FC = () => {
                 </div>
             </div>
 
-            {/* Real-Time Input Section */}
-            <RealtimeInput />
-
-            {/* Bottom Row: Operations Tools */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Bottom Row: Text Input & Purification */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <ManualTest />
                 <PurificationPanel />
             </div>
