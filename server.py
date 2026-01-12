@@ -366,57 +366,43 @@ def save_dataframe_multi_format(df: pd.DataFrame, base_name: str, format: str = 
         
     return file_path, f"/api/downloads/{filename}"
 
+import uuid
+import shutil
+
+# Temp storage
+TEMP_SCAN_DIR = os.path.join(os.getcwd(), "temp_scans")
+os.makedirs(TEMP_SCAN_DIR, exist_ok=True)
+
 @app.post("/api/dataset/scan")
 async def scan_dataset(
-    file: UploadFile = File(...),
-    download_format: str = Form("csv")
+    file: UploadFile = File(...)
 ):
-    print(f"!!! RECEIVING REQUEST: {file.filename} (Format: {download_format}) !!!", flush=True)
+    print(f"!!! RECEIVING REQUEST: {file.filename} !!!", flush=True)
     try:
         # Load data using multi-format handler
         df = await load_dataset_multi_format(file)
         
-        # Preprocess
+        # Preprocess logic (existing logic preserved)
         if 'Diabetes_binary' in df.columns:
             X = df.drop('Diabetes_binary', axis=1).values
         else:
             X = df.values
             
-        # Ensure input dim matches (truncate or pad if needed, but assuming correct format for demo)
+        # Ensure input dim
         if X.shape[1] != INPUT_DIM:
-            # Simple fix for demo if columns don't match exactly
             if X.shape[1] > INPUT_DIM:
                 X = X[:, :INPUT_DIM]
             else:
                 padding = np.zeros((X.shape[0], INPUT_DIM - X.shape[1]))
                 X = np.hstack([X, padding])
         
-        # Scale using fixed reference stats to preserve anomalies (don't fit on the batch!)
-        # Approximate stats from BRFSS (safe ranges)
-        # We assume 21 columns
-        # BMI is col index ? strictly we dropped Diabetes_binary.
-        # columns = ["HighBP", "HighChol", "CholCheck", "BMI", ...]
-        # For demo, simple global mean/std or per-column approximations
-        
-        # Hardcoded approximate means/stds for demo robustness
-        # This ensures 100 BMI looks like (100-28)/6 = 12 sigma (HUGE) -> Poison
-        
-        # Create a dummy scaler with fixed params if we wanted, or just manual:
-        # Let's assume standard normalization for most, but keep outliers OUT.
-        
-        # We'll use a robust scaling strategy:
-        # If value > reasonable_max or < reasonable_min, it contributes to poison score.
-        
-        ref_means = np.array([0.5]*INPUT_DIM) # Dummy binary means
-        ref_means[3] = 28.0 # BMI (approx index 3 if HighBP, HighChol, CholCheck start)
-        ref_means[14] = 3.0 # MentHlth
-        
+        # Scale
+        ref_means = np.array([0.5]*INPUT_DIM)
+        ref_means[3] = 28.0 
+        ref_means[14] = 3.0 
         ref_stds = np.array([0.5]*INPUT_DIM)
-        ref_stds[3] = 6.0 # BMI std
-        ref_stds[14] = 5.0 # MentHlth
-        
-        # Adjust indices if needed based on typical BRFSS order dropping target
-        # [HighBP, HighChol, CholCheck, BMI, Smoker, Stroke, ...]
+        ref_stds[3] = 6.0 
+        ref_stds[14] = 5.0
         
         X_scaled = (X - ref_means) / (ref_stds + 1e-6)
         X_tensor = torch.FloatTensor(X_scaled)
@@ -429,86 +415,96 @@ async def scan_dataset(
         
         # Batch inference
         batch_size = 256
-        dataset_status = []
+        dataset_status = [] # List of strings: "SAFE" or "POISON"
         
         if len(X_tensor) == 0:
             print("DEBUG: Tensor is empty!", flush=True)
 
         with torch.no_grad():
             for i in range(0, len(X_tensor), batch_size):
-                print(f"DEBUG: Starting Batch {i}", flush=True)
                 batch = X_tensor[i:i+batch_size]
                 embeddings = encoder(batch)
-                
                 norms = torch.norm(embeddings, dim=1)
                 
-                # DEBUG: Proof of Life (File Log + Terminal)
-                if i == 0: 
-                    print("DEBUG: ATTEMPTING TO WRITE LOG...", flush=True)
-                    log_msg = (
-                        f"\n\n{'='*20} !!! MODEL INFERENCE TRIGGERED !!! {'='*20}\n"
-                        f"[Model Internal] Batch 0 Embedding Norms (First 5): {norms[:5].tolist()}\n"
-                        f"[Model Internal] Mean Norm: {norms.mean().item():.4f}\n"
-                        f"{'='*65}\n"
-                    )
-                    print(log_msg, flush=True)
-                    
-                    # Write to file for absolute proof
-                    try:
-                        with open("model_inference_log.txt", "a") as f:
-                            f.write(log_msg)
-                            f.flush()
-                        print("DEBUG: LOG WRITTEN SUCCESSFULLY", flush=True)
-                    except Exception as e:
-                        print(f"DEBUG: LOG WRITE FAILED: {e}", flush=True)
+                # Check anomaly again
+                # Threshold based on validation (Mean ~26)
+                # We set a high threshold because our poison is extreme (1000+ sigma).
+                threshold = 150.0 
+                is_poison_batch = (norms > threshold).bool().tolist()
                 
-                for idx, norm in enumerate(norms):
-                    # Pure Model Logic:
-                    # If the input is far from the distribution the model saw during training,
-                    # the projection head (trained via contrastive loss) should map it to a widely different point 
-                    # or the unnormalized magnitude will be extreme due to ReLU on extreme inputs.
-                    
-                    is_poison = False
-                    
-                    # Threshold based on validation of "safe" data (Mean ~26)
-                    # We set a high threshold because our poison is extreme (1000+ sigma).
-                    if norm.item() > 150.0:
-                        is_poison = True
-                         
-                    if is_poison:
-                        poison_count += 1
+                for is_p in is_poison_batch:
+                    if is_p:
                         dataset_status.append("POISON")
                     else:
-                         safe_count += 1
-                         dataset_status.append("SAFE")
-        
-        # Create poison and safe DataFrames
-        df['_status'] = dataset_status
-        poison_df = df[df['_status'] == 'POISON'].drop('_status', axis=1)
-        safe_df = df[df['_status'] == 'SAFE'].drop('_status', axis=1)
-        
-        # Save to files in requested format
-        import uuid
-        scan_id = str(uuid.uuid4())[:8]
-        
-        _, poison_url = save_dataframe_multi_format(poison_df, f"poison_{scan_id}", download_format)
-        _, safe_url = save_dataframe_multi_format(safe_df, f"safe_{scan_id}", download_format)
-        
-        print(f"DEBUG: Saved results in {download_format} format", flush=True)
-        
-        print(f"DEBUG: Saved {len(poison_df)} poison rows to {poison_url}", flush=True)
-        print(f"DEBUG: Saved {len(safe_df)} safe rows to {safe_url}", flush=True)
+                        dataset_status.append("SAFE")
 
+        # Apply flags to dataframe
+        df['_status'] = dataset_status[:len(df)]
+        
+        poison_count = dataset_status.count("POISON")
+        safe_count = dataset_status.count("SAFE")
+
+        # Split and Save Intermediate
+        poison_df = df[df['_status'] == 'POISON'].drop(columns=['_status'])
+        safe_df = df[df['_status'] == 'SAFE'].drop(columns=['_status'])
+        
+        scan_id = str(uuid.uuid4())
+        
+        # Save as Parquet for efficiency
+        safe_df.to_parquet(os.path.join(TEMP_SCAN_DIR, f"{scan_id}_safe.parquet"), index=False)
+        poison_df.to_parquet(os.path.join(TEMP_SCAN_DIR, f"{scan_id}_poison.parquet"), index=False)
+        
+        print(f"Dataset Scanned. ID: {scan_id}. Safe: {safe_count}, Poison: {poison_count}")
+        
         return {
+            "status": "success",
+            "scan_id": scan_id,
             "total_rows": len(df),
             "poison_count": poison_count,
             "safe_count": safe_count,
-            "poison_file": poison_url,
-            "safe_file": safe_url
+            "message": "Scan complete. Request export with scan_id."
         }
+
     except Exception as e:
-        print(f"Error scanning dataset: {e}")
-        return {"error": str(e)}
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/dataset/export")
+async def export_dataset(scan_id: str, type: str, format: str):
+    """
+    Export specific dataset (safe/poison) in requested format.
+    """
+    if type not in ['safe', 'poison']:
+        raise HTTPException(status_code=400, detail="Invalid type. Use 'safe' or 'poison'.")
+        
+    source_path = os.path.join(TEMP_SCAN_DIR, f"{scan_id}_{type}.parquet")
+    
+    if not os.path.exists(source_path):
+        raise HTTPException(status_code=404, detail="Scan data not found or expired.")
+        
+    try:
+        # Load
+        df = pd.read_parquet(source_path)
+        
+        # Use helper to save to format
+        base_name = f"logicloopers_{type}_{scan_id[:8]}"
+        
+        # Note: save_dataframe_multi_format puts things in 'downloads'
+        file_path, url = save_dataframe_multi_format(df, base_name, format)
+        
+        filename = os.path.basename(file_path)
+        
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type='application/octet-stream' 
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 @app.post("/api/check")
 def check_sample(req: CheckRequest):

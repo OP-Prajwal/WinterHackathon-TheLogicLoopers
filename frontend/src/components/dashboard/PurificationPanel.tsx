@@ -1,20 +1,21 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, AlertOctagon, Loader2, Database, FileSpreadsheet, FileJson, FileText, Download, ChevronDown } from 'lucide-react';
+import { Upload, AlertOctagon, Loader2, Database, FileSpreadsheet, FileJson, FileText, Download, ChevronDown, Check } from 'lucide-react';
 import clsx from 'clsx';
 
 interface ScanResult {
+    status: string;
+    scan_id: string;
     total_rows: number;
     poison_count: number;
     safe_count: number;
-    poison_file: string;
-    safe_file: string;
+    message: string;
 }
 
 const FORMATS = [
     { id: 'csv', label: 'CSV', icon: FileSpreadsheet },
     { id: 'json', label: 'JSON', icon: FileJson },
-    { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
+    { id: 'excel', label: 'Excel (XLSX)', icon: FileSpreadsheet },
     { id: 'parquet', label: 'Parquet', icon: Database },
 ];
 
@@ -39,10 +40,10 @@ export const PurificationPanel: React.FC = () => {
         setScanning(true);
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('download_format', exportFormat);
+        // Note: We no longer send format here.
 
         try {
-            const response = await fetch('http://localhost:8002/api/dataset/scan', {
+            const response = await fetch('http://localhost:8003/api/dataset/scan', {
                 method: 'POST',
                 body: formData,
             });
@@ -57,27 +58,23 @@ export const PurificationPanel: React.FC = () => {
         }
     };
 
-    const downloadFile = async (url: string, filename: string) => {
-        try {
-            // Adjust filename based on format
-            const ext = exportFormat === 'excel' ? 'xlsx' : exportFormat;
-            const finalFilename = `${filename.split('.')[0]}.${ext}`;
+    const downloadDataset = async (type: 'safe' | 'poison') => {
+        if (!result) return;
 
-            const response = await fetch(`http://localhost:8002${url}`);
-            if (!response.ok) {
-                throw new Error('Download failed');
-            }
-            const blob = await response.blob();
-            const downloadUrl = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = downloadUrl;
-            link.download = finalFilename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(downloadUrl);
+        try {
+            const scan_id = result.scan_id;
+            const format = exportFormat;
+
+            // Trigger download via new endpoint
+            const url = `http://localhost:8003/api/dataset/export?scan_id=${scan_id}&type=${type}&format=${format}`;
+
+            // We can just open this URL, but strictly better to fetch blob if we want name control
+            // Or just window.open(url) works for GET download file
+
+            window.open(url, '_blank');
+
         } catch (error) {
-            console.error('Download failed:', error);
+            console.error('Download init failed:', error);
             alert('Download failed. Check console.');
         }
     };
@@ -85,50 +82,11 @@ export const PurificationPanel: React.FC = () => {
     const SelectedIcon = FORMATS.find(f => f.id === exportFormat)?.icon || FileSpreadsheet;
 
     return (
-        <div className="glass-panel p-6 relative overflow-hidden flex flex-col h-full">
+        <div className="glass-panel p-6 relative flex flex-col h-full">
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                     <Database size={20} className="text-cyan-400" />
                     <h3 className="text-lg font-bold text-gray-200">Dataset Purification</h3>
-                </div>
-
-                {/* Format Selector */}
-                <div className="relative">
-                    <button
-                        onClick={() => !scanning && setIsFormatOpen(!isFormatOpen)}
-                        className="px-3 py-1.5 bg-dark-800 border border-white/10 rounded-lg text-xs font-mono text-cyan-400 flex items-center gap-2 hover:bg-dark-700 transition-colors"
-                    >
-                        <span>Export: {FORMATS.find(f => f.id === exportFormat)?.label}</span>
-                        <ChevronDown size={12} className={clsx("transition-transform", isFormatOpen && "rotate-180")} />
-                    </button>
-
-                    <AnimatePresence>
-                        {isFormatOpen && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 5 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: 5 }}
-                                className="absolute right-0 top-full mt-2 w-32 bg-dark-900 border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden"
-                            >
-                                {FORMATS.map(f => (
-                                    <button
-                                        key={f.id}
-                                        onClick={() => {
-                                            setExportFormat(f.id);
-                                            setIsFormatOpen(false);
-                                        }}
-                                        className={clsx(
-                                            "w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/5 transition-colors",
-                                            exportFormat === f.id ? "text-cyan-400 bg-cyan-500/10" : "text-gray-400"
-                                        )}
-                                    >
-                                        <f.icon size={12} />
-                                        {f.label}
-                                    </button>
-                                ))}
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
                 </div>
             </div>
 
@@ -153,10 +111,7 @@ export const PurificationPanel: React.FC = () => {
                         </div>
                         <p className="text-gray-300 font-medium text-center">Click to upload dataset</p>
                         <div className="flex gap-2 mt-2">
-                            <span className="px-1.5 py-0.5 bg-white/5 rounded text-[10px] text-gray-500">CSV</span>
-                            <span className="px-1.5 py-0.5 bg-white/5 rounded text-[10px] text-gray-500">JSON</span>
-                            <span className="px-1.5 py-0.5 bg-white/5 rounded text-[10px] text-gray-500">XLSX</span>
-                            <span className="px-1.5 py-0.5 bg-white/5 rounded text-[10px] text-gray-500">PARQUET</span>
+                            <span className="px-1.5 py-0.5 bg-white/5 rounded text-[10px] text-gray-500">Multiformat Support</span>
                         </div>
                     </motion.div>
                 ) : (
@@ -193,11 +148,11 @@ export const PurificationPanel: React.FC = () => {
                             >
                                 {scanning ? (
                                     <>
-                                        <Loader2 className="animate-spin" size={18} /> Processing {exportFormat.toUpperCase()}...
+                                        <Loader2 className="animate-spin" size={18} /> Scanning Dataset...
                                     </>
                                 ) : (
                                     <>
-                                        Scan & Convert to {exportFormat.toUpperCase()}
+                                        Start Purification Scan
                                     </>
                                 )}
                             </button>
@@ -227,28 +182,72 @@ export const PurificationPanel: React.FC = () => {
                                 </div>
                             </div>
 
-                            <div className="space-y-2">
+                            {/* Format Selector inside Result Panel */}
+                            <div className="relative z-20">
+                                <label className="text-xs text-gray-500 uppercase mb-1 block">Download Format</label>
+                                <button
+                                    onClick={() => setIsFormatOpen(!isFormatOpen)}
+                                    className="w-full px-3 py-2 bg-dark-800 border border-white/10 rounded-lg text-sm text-cyan-400 flex items-center justify-between hover:bg-dark-700 transition-colors"
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <SelectedIcon size={16} />
+                                        {FORMATS.find(f => f.id === exportFormat)?.label}
+                                    </span>
+                                    <ChevronDown size={14} className={clsx("transition-transform", isFormatOpen && "rotate-180")} />
+                                </button>
+
+                                <AnimatePresence>
+                                    {isFormatOpen && (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: 5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: 5 }}
+                                            className="absolute left-0 right-0 top-full mt-2 bg-dark-900 border border-white/10 rounded-lg shadow-xl overflow-hidden z-50"
+                                        >
+                                            {FORMATS.map(f => (
+                                                <button
+                                                    key={f.id}
+                                                    onClick={() => {
+                                                        setExportFormat(f.id);
+                                                        setIsFormatOpen(false);
+                                                    }}
+                                                    className={clsx(
+                                                        "w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-white/5 transition-colors",
+                                                        exportFormat === f.id ? "text-cyan-400 bg-cyan-500/10" : "text-gray-400"
+                                                    )}
+                                                >
+                                                    <f.icon size={16} />
+                                                    {f.label}
+                                                    {exportFormat === f.id && <Check size={14} className="ml-auto" />}
+                                                </button>
+                                            ))}
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+
+                            <div className="space-y-2 pt-2">
                                 <button
                                     className="w-full py-2 bg-dark-800 border border-white/10 hover:border-emerald-500/50 hover:text-emerald-400 text-gray-400 rounded-lg text-sm transition-all flex items-center justify-between px-4 group"
-                                    onClick={() => downloadFile(result.safe_file, 'purified_data')}
+                                    onClick={() => downloadDataset('safe')}
                                 >
                                     <div className="flex items-center gap-2">
-                                        <SelectedIcon size={16} />
+                                        <Download size={16} />
                                         <span>Download Clean Data</span>
                                     </div>
-                                    <Download size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    <span className="text-xs opacity-50">{exportFormat.toUpperCase()}</span>
                                 </button>
 
                                 {result.poison_count > 0 && (
                                     <button
                                         className="w-full py-2 bg-dark-800 border border-white/10 hover:border-red-500/50 hover:text-red-400 text-gray-400 rounded-lg text-sm transition-all flex items-center justify-between px-4 group"
-                                        onClick={() => downloadFile(result.poison_file, 'poisoned_data')}
+                                        onClick={() => downloadDataset('poison')}
                                     >
                                         <div className="flex items-center gap-2">
                                             <AlertOctagon size={16} />
                                             <span>Download Poison Data</span>
                                         </div>
-                                        <Download size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        <span className="text-xs opacity-50">{exportFormat.toUpperCase()}</span>
                                     </button>
                                 )}
                             </div>

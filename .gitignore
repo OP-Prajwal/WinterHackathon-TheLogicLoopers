@@ -16,4 +16,5 @@ frontend/build/
 
 # Application data
 downloads/
+temp_scans/
 model_inference_log.txt

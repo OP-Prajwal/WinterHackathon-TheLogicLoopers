@@ -1,0 +1,5 @@
+HighBP,HighChol,CholCheck,BMI,Smoker,Stroke,HeartDisease,PhysActivity,Fruits,Veggies,HvyAlcohol,AnyHealthcare,NoDocbcCost,GenHlth,MentHlth,PhysHlth,DiffWalk,Sex,Age,Education,Income
+1,1,1,40,1,0,0,0,0,1,0,1,0,5,18,15,1,0,9,4,3
+0,0,1,25,1,0,0,1,1,1,0,1,0,3,0,0,0,0,7,6,8
+1,1,1,90,1,0,0,0,0,0,0,1,0,5,30,30,1,0,10,4,1
+0,0,1,22,0,0,0,1,1,1,0,1,0,2,0,0,0,1,4,6,8
