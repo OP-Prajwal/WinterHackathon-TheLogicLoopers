@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-const WS_URL = 'ws://localhost:8003/ws/metrics';
+const WS_URL = 'ws://localhost:8000/ws/metrics';
 
 export type MetricsData = {
     dataset: string;
