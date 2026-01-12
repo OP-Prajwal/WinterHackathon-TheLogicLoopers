@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, User, LogOut, Database, ChevronDown } from 'lucide-react';
+import { User, LogOut, Database, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export const Header: React.FC = () => {
@@ -38,10 +38,6 @@ export const Header: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-6">
-                <button className="relative p-2 rounded-lg text-gray-400 hover:text-cyan-400 hover:bg-white/5 transition-all">
-                    <Bell size={20} />
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full shadow-[0_0_8px_rgba(244,63,94,0.6)] animate-pulse" />
-                </button>
 
                 <div className="relative" ref={dropdownRef}>
                     <button

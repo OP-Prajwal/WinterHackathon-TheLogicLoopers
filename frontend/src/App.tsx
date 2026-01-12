@@ -5,6 +5,7 @@ import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
 import { Signup } from './pages/Signup';
 import { MyModels } from './pages/MyModels';
+import { DataLab } from './pages/DataLab';
 import { SecurityEvents } from './pages/SecurityEvents';
 import { RealTimeMetrics } from './pages/RealTimeMetrics';
 
@@ -32,6 +33,7 @@ function App() {
           <Route path="events" element={<SecurityEvents />} />
           <Route path="metrics" element={<RealTimeMetrics />} />
           <Route path="my-models" element={<MyModels />} />
+          <Route path="datalab" element={<DataLab />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route >

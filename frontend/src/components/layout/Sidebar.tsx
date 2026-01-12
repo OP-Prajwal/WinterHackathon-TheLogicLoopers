@@ -1,12 +1,13 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Activity, ShieldAlert, Settings } from 'lucide-react';
+import { LayoutDashboard, Activity, ShieldAlert, Settings, Database } from 'lucide-react';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
 
 const navItems = [
     { icon: LayoutDashboard, label: 'Overview', path: '/' },
     { icon: Activity, label: 'Personal Zone', path: '/metrics' },
+    { icon: Database, label: 'Data Lab', path: '/datalab' },
     { icon: ShieldAlert, label: 'Security Events', path: '/events' },
     { icon: Settings, label: 'Settings', path: '/settings' },
 ];

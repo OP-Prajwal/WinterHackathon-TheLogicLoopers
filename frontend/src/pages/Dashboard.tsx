@@ -1,22 +1,24 @@
 import React, { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
 import { usePoisonGuardSocket, type MetricsData } from '../services/websocket';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { EffectiveRankChart } from '../components/metrics/EffectiveRankChart';
 import { EventLog } from '../components/dashboard/EventLog';
-import { ManualTest } from '../components/dashboard/ManualTest';
-import { MonitoringResults } from '../components/dashboard/MonitoringResults';
-import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { DataImport } from '../components/dashboard/DataImport';
 import { ModelSelector } from '../components/dashboard/ModelSelector';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
+import { NeuralSentinel } from '../components/dashboard/NeuralSentinel';
+import { SecurityAdvisor } from '../components/dashboard/SecurityAdvisor';
+import { HolographicOverlay } from '../components/dashboard/HolographicOverlay';
+import { EnsembleConsensus } from '../components/dashboard/EnsembleConsensus';
 import { api } from '../services/api';
+import clsx from 'clsx';
 
 export const Dashboard: React.FC = () => {
     const { metrics, events, result, clearResult } = usePoisonGuardSocket();
     const [history, setHistory] = useState<MetricsData[]>([]);
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [loadedData, setLoadedData] = useState<{ filename: string; rows: number } | null>(null);
-    const [showResults, setShowResults] = useState(false);
 
     // Sync state with metrics for the chart
     useEffect(() => {
@@ -25,20 +27,10 @@ export const Dashboard: React.FC = () => {
         }
     }, [metrics]);
 
-    // Show results when ready
-    useEffect(() => {
-        if (result) {
-            setShowResults(true);
-            setIsMonitoring(false);
-        }
-    }, [result]);
-
     const handleStart = async () => {
         try {
-            clearResult(); // Reset previous results
             await api.startMonitoring();
             setIsMonitoring(true);
-            setShowResults(false);
         } catch (e) {
             console.error("Start failed:", e);
             alert(`Start failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -66,7 +58,12 @@ export const Dashboard: React.FC = () => {
     const driftStatus = metrics && metrics.drift_score > 0.5 ? 'warning' : 'neutral';
 
     return (
-        <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-8">
+<<<<<<< HEAD
+        <div className={clsx(
+            "flex flex-col gap-5 max-w-7xl mx-auto pb-8",
+            (metrics?.drift_score ?? 0) > 0.9 && "animate-glitch"
+        )}>
+            {/* Top Section: Import & Model Selection */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="md:col-span-2">
                     <DataImport onDataLoaded={setLoadedData} />
@@ -140,50 +137,62 @@ export const Dashboard: React.FC = () => {
                 />
             </div>
 
-            {/* Main Content Grid - Row 2: Analytics & Logs */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left: Live Chart */}
-                <div className="lg:col-span-2 glass-panel p-6 flex flex-col relative overflow-hidden min-h-[450px]">
-                    <div className="absolute top-0 right-0 p-4 opacity-20">
-                        <div className="w-24 h-24 border-r-2 border-t-2 border-cyan-500 rounded-tr-3xl" />
-                    </div>
+
+            <HolographicOverlay active={(metrics?.drift_score ?? 0) > 0.9} />
+
+            {/* Main Content Grid - Row 2: Advanced HUD */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Left: Neural Sentinel Radar */}
+                <div className="lg:col-span-4 glass-panel p-6 flex flex-col relative overflow-hidden min-h-[450px] bg-dark-900/40 border-cyan-500/10 shadow-[0_0_50px_rgba(6,182,212,0.05)]">
                     <div className="flex items-center justify-between mb-6">
-                        <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
-                            <Activity size={18} className="text-cyan-400" />
-                            Live Representation Dynamics
+                        <h3 className="text-sm font-bold text-gray-400 flex items-center gap-2 uppercase tracking-widest">
+                            <Activity size={16} className="text-cyan-400" />
+                            Neural Sentinel
                         </h3>
-                        <div className="flex gap-2">
-                            <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
-                            <span className="text-xs text-cyan-500 font-mono">LIVE FEED</span>
-                        </div>
+                    </div>
+                    <div className="flex-1 w-full h-full min-h-0">
+                        <NeuralSentinel metrics={metrics} />
+                    </div>
+                </div>
+
+                {/* Middle: Effective Rank Chart (The classic view but polished) */}
+                <div className="lg:col-span-5 glass-panel p-6 flex flex-col relative overflow-hidden min-h-[450px]">
+                    <div className="flex items-center justify-between mb-6">
+                        <h3 className="text-sm font-bold text-gray-400 flex items-center gap-2 uppercase tracking-widest">
+                            <Layers size={16} className="text-violet-400" />
+                            Representation Dynamics
+                        </h3>
                     </div>
                     <div className="flex-1 w-full h-full min-h-0">
                         <EffectiveRankChart data={history} />
                     </div>
                 </div>
 
-                {/* Right: System Status & Events */}
-                <div className="flex flex-col gap-6">
-                    <ControlPanel />
-                    <div className="flex-1 glass-panel p-6 overflow-hidden flex flex-col min-h-[300px]">
+                {/* Right: Security Events & advisor */}
+                <div className="lg:col-span-3 flex flex-col gap-6">
+                    <SecurityAdvisor metrics={metrics} />
+                    <EnsembleConsensus driftScore={metrics?.drift_score ?? 0} />
+                    <div className="flex-1 glass-panel p-5 overflow-hidden flex flex-col min-h-[300px]">
                         <EventLog events={events} />
                     </div>
                 </div>
             </div>
 
-            {/* Bottom Row: Text Input & Purification */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className={showResults ? "lg:col-span-1" : "lg:col-span-2 transition-all duration-500"}>
-                    <ManualTest />
-                </div>
-                {showResults && result && (
-                    <MonitoringResults
-                        scanId={result.scan_id}
-                        cleanCount={result.clean_count}
-                        poisonCount={result.poison_count}
-                        onClose={() => setShowResults(false)}
-                    />
-                )}
+            {/* Bottom Row: Footer is managed by the data stream */}
+
+            {/* Data Stream Footer */}
+            <div className="mt-8 border-t border-white/5 pt-4 overflow-hidden whitespace-nowrap opacity-20 hover:opacity-100 transition-opacity">
+                <motion.div
+                    animate={{ x: [0, -2000] }}
+                    transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
+                    className="flex gap-8 text-[9px] font-mono text-cyan-500 uppercase tracking-[0.3em]"
+                >
+                    {Array.from({ length: 10 }).map((_, i) => (
+                        <span key={i}>
+                            SYSTEM_CORE_INIT // PACKET_INSPECTION_ACTIVE // ADVERSARIAL_DEFENSE_ENGAGED // NEURAL_DRIFT_THRESHOLD: 0.85 // MEM_LOG_0x{(i * 4096).toString(16)} // ENCRYPTION_LAYER_SECURE
+                        </span>
+                    ))}
+                </motion.div>
             </div>
         </div >
     );
