@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import { API_BASE } from '../../services/api';
 
+
 export const ControlPanel: React.FC = () => {
     const [strictMode, setStrictMode] = useState(true);
     const [isHalted, setIsHalted] = useState(false);
@@ -75,6 +76,8 @@ export const ControlPanel: React.FC = () => {
                         />
                     </motion.button>
                 </div>
+
+
 
                 {/* Halt Override */}
                 {isHalted && (

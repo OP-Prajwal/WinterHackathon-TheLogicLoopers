@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, Zap } from 'lucide-react';
+import { Shield, AlertTriangle, Zap, Brain } from 'lucide-react';
 import { API_BASE } from '../services/api';
 
 export const Settings = () => {
@@ -8,16 +8,53 @@ export const Settings = () => {
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+    const [activeModelId, setActiveModelId] = useState<string | null>(null);
+    const [models, setModels] = useState<any[]>([]);
+
     useEffect(() => {
         // Fetch initial settings
-        fetch(`${API_BASE}/api/settings`)
-            .then(res => res.json())
-            .then(data => {
+        const fetchSettings = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/api/settings`);
+                const data = await res.json();
                 setStrictMode(data.strict_mode);
                 if (data.speed) setSpeed(data.speed);
-            })
-            .catch(err => console.error("Failed to fetch settings:", err));
+                setActiveModelId(data.active_model);
+            } catch (err) {
+                console.error("Failed to fetch settings:", err);
+            }
+        };
+
+        const fetchModels = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch(`${API_BASE}/api/datasets`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const allFiles = await res.json();
+                setModels(allFiles.filter((f: any) => f.type === 'trained_model'));
+            } catch (err) {
+                console.error("Failed to fetch models:", err);
+            }
+        };
+
+        fetchSettings();
+        fetchModels();
     }, []);
+
+    const handleModelChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const value = e.target.value || null;
+        setActiveModelId(value);
+        try {
+            await fetch(`${API_BASE}/api/settings/model?model_id=${value || ''}`, {
+                method: 'POST'
+            });
+            showMessage('Default Defense Model Updated', 'success');
+        } catch (error) {
+            console.error("Failed to set active model", error);
+            showMessage('Failed to update model', 'error');
+        }
+    };
 
     const handleToggleStrict = async () => {
         setLoading(true);
@@ -35,10 +72,6 @@ export const Settings = () => {
             setLoading(false);
         }
     };
-
-
-
-
 
     const handleSpeedChange = async (value: number) => {
         setSpeed(value);
@@ -70,6 +103,40 @@ export const Settings = () => {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Default Model Configuration */}
+                <div className="md:col-span-2 bg-dark-800/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+                    <div className="flex items-start gap-4">
+                        <div className="p-3 rounded-lg bg-violet-500/20">
+                            <Brain className="w-6 h-6 text-violet-400" />
+                        </div>
+                        <div className="flex-1">
+                            <h3 className="text-lg font-semibold text-white">Default System Model</h3>
+                            <p className="text-sm text-gray-400 mt-1 mb-4">
+                                Select the primary trained model to use for all poison detection tasks. This setting is persistent and will be loaded on system startup.
+                            </p>
+
+                            <select
+                                value={activeModelId || ''}
+                                onChange={handleModelChange}
+                                className="w-full md:w-1/2 p-3 bg-dark-900 border border-white/10 rounded-xl text-gray-200 focus:border-violet-500 outline-none transition-colors"
+                            >
+                                <option value="">Use Default System Defense</option>
+                                {models.map(model => (
+                                    <option key={model.id} value={model.id}>
+                                        {model.name} ({(model.size / 1024 / 1024).toFixed(2)} MB)
+                                    </option>
+                                ))}
+                            </select>
+                            {activeModelId && (
+                                <div className="mt-2 text-xs text-violet-400 flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+                                    Active Model Persistence Enabled
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
                 {/* Strict Mode Card */}
                 <div className="bg-dark-800/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
                     <div className="flex items-start justify-between">
@@ -98,8 +165,6 @@ export const Settings = () => {
                         </button>
                     </div>
                 </div>
-
-
 
                 {/* Speed Control */}
                 <div className="bg-dark-800/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
@@ -136,8 +201,6 @@ export const Settings = () => {
                         ))}
                     </div>
                 </div>
-
-
             </div>
         </div>
     );

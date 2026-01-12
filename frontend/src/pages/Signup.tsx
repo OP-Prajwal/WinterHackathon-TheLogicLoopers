@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Lock, User, UserPlus, Shield } from 'lucide-react';
 
 export function Signup() {
+    const [fullName, setFullName] = useState('');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -26,12 +27,14 @@ export function Signup() {
             const response = await fetch('http://localhost:8000/api/auth/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password }),
+                body: JSON.stringify({ username, password, full_name: fullName }),
             });
 
             if (response.ok) {
                 const data = await response.json();
                 localStorage.setItem('token', data.access_token);
+                localStorage.setItem('username', username);
+                localStorage.setItem('full_name', data.full_name);
                 navigate('/');
             } else {
                 const errData = await response.json().catch(() => ({ detail: 'Registration failed' }));
@@ -89,6 +92,21 @@ export function Signup() {
                 )}
 
                 <form onSubmit={handleSignup} className="space-y-4">
+                    <div className="space-y-1">
+                        <label className="text-xs font-medium text-gray-400 ml-1">Full Name</label>
+                        <div className="relative group">
+                            <User className="absolute left-3 top-3 w-4 h-4 text-gray-500 group-focus-within:text-indigo-400 transition-colors" />
+                            <input
+                                type="text"
+                                className="w-full pl-9 pr-4 py-2.5 bg-black/30 border border-white/10 rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all text-sm"
+                                value={fullName}
+                                onChange={(e) => setFullName(e.target.value)}
+                                placeholder="John Doe"
+                                required
+                            />
+                        </div>
+                    </div>
+
                     <div className="space-y-1">
                         <label className="text-xs font-medium text-gray-400 ml-1">Username</label>
                         <div className="relative group">

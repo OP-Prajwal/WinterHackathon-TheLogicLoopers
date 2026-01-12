@@ -165,10 +165,12 @@ class CheckRequest(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
+    full_name: str = "Anonymous User"
 
 class Token(BaseModel):
     access_token: str
     token_type: str
+    full_name: str = "Anonymous User"
 
 # --- Global State ---
 # "training" flag here now means "monitoring active"
@@ -293,6 +295,13 @@ async def monitoring_loop():
 
         total_batches = (total_samples + batch_size - 1) // batch_size
         idx = 0
+        
+        # Check for active model
+        active_model = state.get("active_model")
+        if active_model:
+            print(f"[MONITORING] Using Custom Defense Model: {active_model}", flush=True)
+        else:
+            print(f"[MONITORING] Using Default System Defense", flush=True)        
         
         monitoring_results["clean_indices"] = []
         monitoring_results["poison_indices"] = []
@@ -510,14 +519,18 @@ async def register(user: UserCreate):
         raise HTTPException(status_code=400, detail="Username already registered")
     
     hashed_password = get_password_hash(user.password)
-    user_dict = {"username": user.username, "hashed_password": hashed_password}
+    user_dict = {
+        "username": user.username, 
+        "hashed_password": hashed_password,
+        "full_name": user.full_name
+    }
     await db.users.insert_one(user_dict)
     
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "full_name": user.full_name}
 
 @app.post("/api/auth/login", response_model=Token)
 async def login(user: UserCreate):
@@ -534,7 +547,11 @@ async def login(user: UserCreate):
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer", 
+        "full_name": db_user.get("full_name", "Anonymous User")
+    }
 
 @app.get("/api/metrics")
 async def get_metrics():
@@ -591,12 +608,14 @@ async def get_settings_from_db():
     state["strict_mode"] = settings.get("strict_mode", True)
     state["sensitivity"] = settings.get("sensitivity", 1.0)
     state["speed"] = settings.get("speed", 1.0)
+    state["active_model"] = settings.get("active_model", None)
     # state["halted"] = settings.get("halted", False) # Don't persist halted state across restarts usually? Let's say yes.
     # state["status"] = "IDLE" # Always idle on restart
     return settings
 
 async def update_setting_db(key: str, value):
     db = get_database()
+    await db.settings.update_one({"_id": "global_config"}, {"$set": {key: value}})
     await db.settings.update_one(
         {"_id": "global_config"},
         {"$set": {key: value}},
@@ -613,7 +632,8 @@ async def get_settings():
         "halted": state["halted"],
         "sensitivity": state["sensitivity"],
         "speed": state["speed"],
-        "status": state["status"]
+        "status": state["status"],
+        "active_model": state.get("active_model")
     }
 
 @app.post("/api/settings/speed")
@@ -647,9 +667,18 @@ async def reset_halt():
     """Reset system from halted state"""
     state["halted"] = False
     state["status"] = "IDLE"
+    state["status"] = "IDLE"
     await update_setting_db("halted", False)
     print("[SETTINGS] System HALT reset", flush=True)
     return {"halted": False, "status": "IDLE"}
+
+@app.post("/api/settings/model")
+async def set_active_model(model_id: str = None):
+    """Set the active model for monitoring"""
+    state["active_model"] = model_id
+    await update_setting_db("active_model", model_id)
+    print(f"[SETTINGS] Active Model set to: {model_id}", flush=True)
+    return {"active_model": state["active_model"]}
 
 # --- Training Control Endpoints ---
 @app.post("/api/training/start")
@@ -898,6 +927,81 @@ def save_dataframe_multi_format(df: pd.DataFrame, base_name: str, format: str = 
         df.to_parquet(file_path, index=False)
         
     return file_path, f"/api/downloads/{filename}"
+
+@app.get("/api/datasets")
+async def list_datasets(current_user: dict = Depends(get_current_user)):
+    """List datasets owned by current user"""
+    db = get_database()
+    cursor = db.fs.files.find({"metadata.owner": current_user["username"]})
+    datasets = []
+    async for file in cursor:
+        datasets.append({
+            "id": str(file["_id"]),
+            "name": file["filename"],
+            "type": file["metadata"].get("type", "Unknown"),
+            "size": f"{file['length'] / 1024 / 1024:.2f} MB",
+            "lastModified": file["uploadDate"].isoformat(),
+            "status": "Ready",  # Default status for now
+            "rows": file["metadata"].get("rows", 0)
+        })
+    return datasets
+
+@app.post("/api/datasets/upload")
+async def upload_dataset(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """Upload a new dataset to GridFS"""
+    content = await file.read()
+    
+    # Simple validation/metadata extraction
+    filename = file.filename
+    file_type = "Tabular"
+    rows = 0
+    
+    # Try to parse row count just for metadata
+    try:
+        if filename.endswith('.csv'):
+             import pandas as pd
+             df = pd.read_csv(io.BytesIO(content))
+             rows = len(df)
+             file_type = "CSV"
+        elif filename.endswith('.parquet'):
+             import pandas as pd
+             df = pd.read_parquet(io.BytesIO(content))
+             rows = len(df)
+             file_type = "Parquet"
+        elif filename.endswith('.pt') or filename.endswith('.pth'):
+             file_type = "trained_model"
+    except:
+        pass # Ignore parsing errors for metadata logic, just store file
+        
+    file_id = await upload_bytes_to_gridfs(
+        filename, 
+        content, 
+        metadata={
+            "owner": current_user["username"],
+            "type": file_type,
+            "rows": rows
+        }
+    )
+    
+    return {"status": "uploaded", "id": file_id, "filename": filename}
+
+@app.delete("/api/datasets/{file_id}")
+async def delete_dataset(file_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a dataset from GridFS"""
+    db = get_database()
+    fs = AsyncIOMotorGridFSBucket(db)
+    from bson import ObjectId
+    
+    # Check ownership
+    file = await db.fs.files.find_one({"_id": ObjectId(file_id)})
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    if file["metadata"].get("owner") != current_user["username"]:
+         raise HTTPException(status_code=403, detail="Not authorized to delete this file")
+         
+    await fs.delete(ObjectId(file_id))
+    return {"status": "deleted", "id": file_id}
 
 import uuid
 import shutil

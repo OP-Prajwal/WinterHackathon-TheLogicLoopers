@@ -7,6 +7,7 @@ export const Header: React.FC = () => {
     const dropdownRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
     const username = localStorage.getItem('username') || 'Admin';
+    const fullName = localStorage.getItem('full_name') || username;
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -68,8 +69,8 @@ export const Header: React.FC = () => {
                                         </div>
                                     </div>
                                     <div>
-                                        <h4 className="text-sm font-bold text-white">{username}</h4>
-                                        <p className="text-xs text-gray-400">User</p>
+                                        <h4 className="text-sm font-bold text-white">{fullName}</h4>
+                                        <p className="text-xs text-gray-400">@{username}</p>
                                     </div>
                                 </div>
                             </div>
@@ -77,16 +78,16 @@ export const Header: React.FC = () => {
                             {/* Menu Items */}
                             <div className="p-2 space-y-1">
                                 <div className="px-3 py-2">
-                                    <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">My Datasets</p>
+                                    <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">My Models</p>
                                     <button
                                         onClick={() => {
                                             setIsProfileOpen(false);
-                                            navigate('/datasets');
+                                            navigate('/my-models');
                                         }}
                                         className="w-full flex items-center gap-3 p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/20 transition-colors text-left"
                                     >
                                         <Database size={16} />
-                                        <span className="text-sm font-medium">My Datasets</span>
+                                        <span className="text-sm font-medium">My Models</span>
                                         <div className="ml-auto w-2 h-2 bg-cyan-400 rounded-full shadow-[0_0_8px_rgba(34,211,238,0.8)] animate-pulse" />
                                     </button>
                                 </div>

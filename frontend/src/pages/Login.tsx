@@ -25,6 +25,7 @@ export function Login() {
         const data = await response.json();
         localStorage.setItem('token', data.access_token);
         localStorage.setItem('username', username);
+        localStorage.setItem('full_name', data.full_name);
         navigate('/');
       } else {
         const errData = await response.json().catch(() => ({ detail: 'Login failed' }));

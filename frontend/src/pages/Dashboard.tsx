@@ -7,6 +7,7 @@ import { ManualTest } from '../components/dashboard/ManualTest';
 import { MonitoringResults } from '../components/dashboard/MonitoringResults';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { DataImport } from '../components/dashboard/DataImport';
+import { ModelSelector } from '../components/dashboard/ModelSelector';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -66,8 +67,16 @@ export const Dashboard: React.FC = () => {
 
     return (
         <div className="flex flex-col gap-6 max-w-7xl mx-auto pb-8">
-            {/* Data Import Section - TOP */}
-            <DataImport onDataLoaded={setLoadedData} />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-2">
+                    <DataImport onDataLoaded={setLoadedData} />
+                </div>
+                <div className="md:col-span-1">
+                    <div className="bg-dark-900/40 border border-white/5 rounded-xl p-4 h-full flex flex-col justify-center">
+                        <ModelSelector />
+                    </div>
+                </div>
+            </div>
 
             {/* Header / Controls */}
             {loadedData && (
@@ -176,6 +185,6 @@ export const Dashboard: React.FC = () => {
                     />
                 )}
             </div>
-        </div>
+        </div >
     );
 };
