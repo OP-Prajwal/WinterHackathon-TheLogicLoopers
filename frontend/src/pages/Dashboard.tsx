@@ -58,7 +58,6 @@ export const Dashboard: React.FC = () => {
     const driftStatus = metrics && metrics.drift_score > 0.5 ? 'warning' : 'neutral';
 
     return (
-<<<<<<< HEAD
         <div className={clsx(
             "flex flex-col gap-5 max-w-7xl mx-auto pb-8",
             (metrics?.drift_score ?? 0) > 0.9 && "animate-glitch"
