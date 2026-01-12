@@ -89,5 +89,7 @@ export const usePoisonGuardSocket = () => {
         }
     };
 
-    return { isConnected, metrics, events, result, sendAction };
+    const clearResult = () => setResult(null);
+
+    return { isConnected, metrics, events, result, sendAction, clearResult };
 };

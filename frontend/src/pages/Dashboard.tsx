@@ -11,7 +11,7 @@ import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react
 import { api } from '../services/api';
 
 export const Dashboard: React.FC = () => {
-    const { metrics, events, result } = usePoisonGuardSocket();
+    const { metrics, events, result, clearResult } = usePoisonGuardSocket();
     const [history, setHistory] = useState<MetricsData[]>([]);
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [loadedData, setLoadedData] = useState<{ filename: string; rows: number } | null>(null);
@@ -34,11 +34,13 @@ export const Dashboard: React.FC = () => {
 
     const handleStart = async () => {
         try {
+            clearResult(); // Reset previous results
             await api.startMonitoring();
             setIsMonitoring(true);
             setShowResults(false);
         } catch (e) {
-            console.error(e);
+            console.error("Start failed:", e);
+            alert(`Start failed: ${e instanceof Error ? e.message : String(e)}`);
         }
     };
 
