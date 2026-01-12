@@ -17,6 +17,9 @@ from sklearn.preprocessing import StandardScaler
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException, Depends, status
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Form
+from pydantic import BaseModel
+import io
 from pydantic import BaseModel
 from typing import List, Dict
 import sys
@@ -369,30 +372,92 @@ def reset_halt():
     return {"halted": False, "status": "IDLE"}
 
 
+
+# --- Data Handler Helper Functions ---
+async def load_dataset_multi_format(file: UploadFile) -> pd.DataFrame:
+    """Load dataset from various formats"""
+    filename = file.filename.lower()
+    contents = await file.read()
+    buffer = io.BytesIO(contents)
+    
+    try:
+        if filename.endswith('.csv'):
+            return pd.read_csv(buffer)
+        elif filename.endswith('.json'):
+            return pd.read_json(buffer)
+        elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+            return pd.read_excel(buffer)
+        elif filename.endswith('.parquet'):
+            return pd.read_parquet(buffer)
+        elif filename.endswith('.txt'):
+            # Try parsing as CSV first
+            try:
+                buffer.seek(0)
+                return pd.read_csv(buffer)
+            except:
+                raise ValueError("Text file could not be parsed as CSV.")
+        else:
+             # Default try CSV
+             buffer.seek(0)
+             return pd.read_csv(buffer)
+    except Exception as e:
+        print(f"Error loading file {filename}: {e}")
+        raise ValueError(f"Failed to parse file: {str(e)}")
+
+def save_dataframe_multi_format(df: pd.DataFrame, base_name: str, format: str = "csv") -> tuple[str, str]:
+    """Save dataframe in requested format. Returns (full_path, relative_url)"""
+    os.makedirs("downloads", exist_ok=True)
+    
+    # Normalize format
+    format = format.lower()
+    if format not in ["csv", "json", "excel", "xlsx", "parquet"]:
+        format = "csv"
+        
+    if format == "excel": format = "xlsx"
+        
+    filename = f"{base_name}.{format}"
+    file_path = os.path.join("downloads", filename)
+    
+    if format == "csv":
+        df.to_csv(file_path, index=False)
+    elif format == "json":
+        df.to_json(file_path, orient="records", indent=2)
+    elif format == "xlsx":
+        df.to_excel(file_path, index=False)
+    elif format == "parquet":
+        df.to_parquet(file_path, index=False)
+        
+    return file_path, f"/api/downloads/{filename}"
+
+import uuid
+import shutil
+
+# Temp storage
+TEMP_SCAN_DIR = os.path.join(os.getcwd(), "temp_scans")
+os.makedirs(TEMP_SCAN_DIR, exist_ok=True)
+
 @app.post("/api/dataset/scan")
 async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     print(f"!!! RECEIVING REQUEST: {file.filename} from {current_user['username']} !!!", flush=True)
     try:
-        contents = await file.read()
-        import io
-        df = pd.read_csv(io.BytesIO(contents))
+        # Load data using multi-format handler from feat/multi-format-io
+        df = await load_dataset_multi_format(file)
         
-        # Preprocess
+        # Preprocess logic (existing logic preserved)
         if 'Diabetes_binary' in df.columns:
             X = df.drop('Diabetes_binary', axis=1).values
         else:
             X = df.values
             
-        # Ensure input dim matches (truncate or pad if needed, but assuming correct format for demo)
+        # Ensure input dim
         if X.shape[1] != INPUT_DIM:
-            # Simple fix for demo if columns don't match exactly
             if X.shape[1] > INPUT_DIM:
                 X = X[:, :INPUT_DIM]
             else:
                 padding = np.zeros((X.shape[0], INPUT_DIM - X.shape[1]))
                 X = np.hstack([X, padding])
         
-        # Scale using fixed reference stats
+        # Scale using fixed reference stats (from HEAD)
         ref_means = np.array([0.5]*INPUT_DIM)
         ref_means[3] = 28.0 # BMI 
         ref_means[14] = 3.0 # MentHlth
@@ -410,7 +475,7 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
         
         # Batch inference
         batch_size = 256
-        dataset_status = []
+        dataset_status = [] # List of strings: "SAFE" or "POISON"
         
         with torch.no_grad():
             for i in range(0, len(X_tensor), batch_size):
@@ -418,24 +483,25 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
                 embeddings = encoder(batch)
                 norms = torch.norm(embeddings, dim=1)
                 
-                for idx, norm in enumerate(norms):
-                    is_poison = False
-                    if norm.item() > 150.0:
-                        is_poison = True
-                         
-                    if is_poison:
+                # Check anomaly again (Using logic from feat/multi-format-io which seems updated/consistent)
+                threshold = 150.0 
+                is_poison_batch = (norms > threshold).bool().tolist()
+                
+                for is_p in is_poison_batch:
+                    if is_p:
                         poison_count += 1
                         dataset_status.append("POISON")
                     else:
-                         safe_count += 1
-                         dataset_status.append("SAFE")
-        
+                        safe_count += 1
+                        dataset_status.append("SAFE")
+
         # Create poison and safe DataFrames
-        df['_status'] = dataset_status
-        poison_df = df[df['_status'] == 'POISON'].drop('_status', axis=1)
-        safe_df = df[df['_status'] == 'SAFE'].drop('_status', axis=1)
+        df['_status'] = dataset_status[:len(df)]
         
-        # Save to files (Local Storage for download)
+        poison_df = df[df['_status'] == 'POISON'].drop(columns=['_status'])
+        safe_df = df[df['_status'] == 'SAFE'].drop(columns=['_status'])
+        
+        # Save to files (Local Storage for download) - Preserving structure from HEAD for frontend compatibility
         import uuid
         scan_id = str(uuid.uuid4())[:8]
         poison_filename = f"poison_{scan_id}.csv"
@@ -448,8 +514,12 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
         poison_df.to_csv(poison_path, index=False)
         safe_df.to_csv(safe_path, index=False)
         
-        # --- MongoDB Storage ---
-        # Store metadata and result summary
+        # Also save Parquet backups for the new export feature (from feat/multi-format-io)
+        os.makedirs(TEMP_SCAN_DIR, exist_ok=True)
+        safe_df.to_parquet(os.path.join(TEMP_SCAN_DIR, f"{scan_id}_safe.parquet"), index=False)
+        poison_df.to_parquet(os.path.join(TEMP_SCAN_DIR, f"{scan_id}_poison.parquet"), index=False)
+
+        # --- MongoDB Storage --- (From HEAD)
         scan_record = {
             "scan_id": scan_id,
             "filename": file.filename,
@@ -478,6 +548,42 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
     except Exception as e:
         print(f"Error scanning dataset: {e}")
         return {"error": str(e)}
+
+@app.get("/api/dataset/export")
+async def export_dataset(scan_id: str, type: str, format: str):
+    """
+    Export specific dataset (safe/poison) in requested format.
+    """
+    if type not in ['safe', 'poison']:
+        raise HTTPException(status_code=400, detail="Invalid type. Use 'safe' or 'poison'.")
+        
+    source_path = os.path.join(TEMP_SCAN_DIR, f"{scan_id}_{type}.parquet")
+    
+    if not os.path.exists(source_path):
+        raise HTTPException(status_code=404, detail="Scan data not found or expired.")
+        
+    try:
+        # Load
+        df = pd.read_parquet(source_path)
+        
+        # Use helper to save to format
+        base_name = f"logicloopers_{type}_{scan_id[:8]}"
+        
+        # Note: save_dataframe_multi_format puts things in 'downloads'
+        file_path, url = save_dataframe_multi_format(df, base_name, format)
+        
+        filename = os.path.basename(file_path)
+        
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type='application/octet-stream' 
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 @app.get("/api/scans")
 async def get_scans(current_user: dict = Depends(get_current_user)):
