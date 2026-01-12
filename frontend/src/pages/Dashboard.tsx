@@ -6,35 +6,54 @@ import ControlPanel from '../components/dashboard/ControlPanel';
 import EventLog from '../components/dashboard/EventLog';
 import PurificationPanel from '../components/dashboard/PurificationPanel';
 import ManualTest from '../components/dashboard/ManualTest';
+import { fetchMetrics, fetchRankHistory, type Metrics, type RankData } from '../services/dashboardService';
 
 const Dashboard: React.FC = () => {
+    const [metrics, setMetrics] = React.useState<Metrics | null>(null);
+    const [chartData, setChartData] = React.useState<RankData[]>([]);
+
+    React.useEffect(() => {
+        const loadData = async () => {
+            try {
+                const [m, c] = await Promise.all([fetchMetrics(), fetchRankHistory()]);
+                setMetrics(m);
+                setChartData(c);
+            } catch (e) {
+                console.error(e);
+            }
+        };
+        loadData();
+    }, []);
+
+    if (!metrics) return <div className="p-8">Loading...</div>;
+
     return (
         <div className="space-y-6">
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <MetricCard
                     label="Total Scans"
-                    value="12,345"
+                    value={metrics.totalScans.toLocaleString()}
                     change="+12% from last month"
                     trend="up"
                     icon={Activity}
                 />
                 <MetricCard
                     label="Security Score"
-                    value="98.2%"
+                    value={`${metrics.securityScore}%`}
                     change="+2.1% from last week"
                     trend="up"
                     icon={ShieldCheck}
                 />
                 <MetricCard
                     label="Threats Detected"
-                    value="24"
+                    value={metrics.threatsDetected}
                     change="-5% from last month"
                     trend="down"
                     icon={AlertTriangle}
                 />
                 <MetricCard
                     label="Database Size"
-                    value="1.2TB"
+                    value={metrics.databaseSize}
                     change="+0.5% from last month"
                     trend="neutral"
                     icon={Database}
@@ -43,7 +62,7 @@ const Dashboard: React.FC = () => {
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
                 <div className="col-span-4">
-                    <EffectiveRankChart />
+                    <EffectiveRankChart data={chartData} />
                 </div>
                 <div className="col-span-3 bg-card rounded-lg border border-border p-6 text-card-foreground">
                     <h3 className="font-semibold text-lg mb-4">Recent Alerts</h3>

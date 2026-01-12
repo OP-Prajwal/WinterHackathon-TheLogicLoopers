@@ -1,17 +1,13 @@
 import React from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-const data = [
-    { name: 'Jan', rank: 400 },
-    { name: 'Feb', rank: 300 },
-    { name: 'Mar', rank: 200 },
-    { name: 'Apr', rank: 278 },
-    { name: 'May', rank: 189 },
-    { name: 'Jun', rank: 239 },
-    { name: 'Jul', rank: 349 },
-];
+import { type RankData } from '../../services/dashboardService';
 
-const EffectiveRankChart: React.FC = () => {
+interface EffectiveRankChartProps {
+    data: RankData[];
+}
+
+const EffectiveRankChart: React.FC<EffectiveRankChartProps> = ({ data }) => {
     return (
         <div className="w-full h-[300px] bg-card p-4 rounded-lg border border-border">
             <h3 className="text-lg font-semibold mb-4">Effective Rank History</h3>

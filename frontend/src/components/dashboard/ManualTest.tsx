@@ -1,17 +1,24 @@
 import React, { useState } from 'react';
 import { Send, AlertTriangle, CheckCircle } from 'lucide-react';
+import { analyzePrompt } from '../../services/analysisService';
 
 const ManualTest: React.FC = () => {
     const [input, setInput] = useState('');
     const [result, setResult] = useState<'safe' | 'poisoned' | null>(null);
+    const [loading, setLoading] = useState(false);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim()) return;
-
-        // Mock analysis
-        const isPoisoned = input.toLowerCase().includes('poison');
-        setResult(isPoisoned ? 'poisoned' : 'safe');
+        setLoading(true);
+        try {
+            const res = await analyzePrompt(input);
+            setResult(res.is_safe ? 'safe' : 'poisoned');
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
