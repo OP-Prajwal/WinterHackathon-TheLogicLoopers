@@ -17,3 +17,4 @@ frontend/build/
 # Application data
 downloads/
 model_inference_log.txt
+env/

@@ -29,7 +29,7 @@ app = FastAPI(title="Poison Guard API", version="0.1.0")
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -124,7 +124,9 @@ state = {
     "batch": 0,
     "poisoned": False,
     "strict_mode": True,  # If True, HALT immediately on attack. If False, just alert.
-    "halted": False       # Track if system has halted due to strict mode
+    "halted": False,       # Track if system has halted due to strict mode
+    "sensitivity": 1.0,    # Detection Sensitivity (0.5=Low, 1.0=Medium, 1.5=High)
+    "speed": 1.0           # Simulation Speed (delay in seconds)
 }
 
 # --- WebSocket Manager ---
@@ -200,10 +202,23 @@ async def monitoring_loop():
         
         # Drift Score Calculation (Demo logic)
         # Assuming model trained on Clean has High Rank > 10.
+        
+        # Scale thresholds by sensitivity
+        # High Sensitivity (1.5) -> Critical Threshold increases (e.g. 5 * 1.5 = 7.5), distinct drop needed.
+        # Actually logic is reverse: If rank drops, it's bad.
+        # High Sensitivity => We want to trigger HALT easier? 
+        # Halt triggers if drift > 0.8.
+        # Drift > 0.8 happens if rank < threshold.
+        # So check: if rank < (5.0 * sensitivity): drift = 0.9
+        # Example: Sens 1.5 (High) -> Threshold 7.5. If rank is 6.0 (normally safe), now it's < 7.5 => ALERT. Correct.
+        
+        critical_thresh = 5.0 * state["sensitivity"]
+        warning_thresh = 15.0 * state["sensitivity"]
+        
         drift = 0.0
-        if rank < 5.0:
+        if rank < critical_thresh:
             drift = 0.9 # High drift/poison probability
-        elif rank < 15.0:
+        elif rank < warning_thresh:
             drift = 0.4
         else:
             drift = 0.05
@@ -261,9 +276,35 @@ async def monitoring_loop():
                 }
             })
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(state["speed"])
 
 # --- API Endpoints ---
+@app.websocket("/ws/metrics")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                message = json.loads(data)
+                if "action" in message:
+                    if message["action"] == "start":
+                        if not state["training"]:
+                            state["training"] = True
+                            state["status"] = "MONITORING"
+                            # Start the background task
+                            asyncio.create_task(monitoring_loop())
+                    elif message["action"] == "stop":
+                        state["training"] = False
+                        state["status"] = "IDLE"
+                    elif message["action"] == "inject":
+                        state["poisoned"] = not state["poisoned"]
+            except Exception as e:
+                print(f"Error processing WS message: {e}")
+                
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "service": "poison-guard-backend"}
@@ -287,8 +328,24 @@ def get_settings():
     return {
         "strict_mode": state["strict_mode"],
         "halted": state["halted"],
+        "sensitivity": state["sensitivity"],
+        "speed": state["speed"],
         "status": state["status"]
     }
+
+@app.post("/api/settings/speed")
+def set_speed(value: float):
+    """Set simulation delay in seconds (0.1 to 5.0)"""
+    state["speed"] = max(0.05, min(5.0, value))
+    print(f"[SETTINGS] Speed set to: {state['speed']}s delay", flush=True)
+    return {"speed": state["speed"]}
+
+@app.post("/api/settings/sensitivity")
+def set_sensitivity(value: float):
+    """Set detection sensitivity (0.1 to 3.0)"""
+    state["sensitivity"] = max(0.1, min(3.0, value))
+    print(f"[SETTINGS] Sensitivity set to: {state['sensitivity']}", flush=True)
+    return {"sensitivity": state["sensitivity"]}
 
 @app.post("/api/settings/strict-mode")
 def set_strict_mode(enabled: bool = True):
@@ -304,6 +361,26 @@ def reset_halt():
     state["status"] = "IDLE"
     print("[SETTINGS] System HALT reset", flush=True)
     return {"halted": False, "status": "IDLE"}
+
+# --- Training Control Endpoints ---
+@app.post("/api/training/start")
+async def start_training():
+    if not state["training"]:
+        state["training"] = True
+        state["status"] = "MONITORING"
+        asyncio.create_task(monitoring_loop())
+    return {"status": "started", "state": state}
+
+@app.post("/api/training/stop")
+async def stop_training():
+    state["training"] = False
+    state["status"] = "IDLE"
+    return {"status": "stopped", "state": state}
+
+@app.post("/api/training/inject")
+async def inject_poison():
+    state["poisoned"] = not state["poisoned"]
+    return {"status": "toggled", "poisoned": state["poisoned"]}
 
 
 @app.post("/api/dataset/scan")
