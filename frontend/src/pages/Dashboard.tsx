@@ -7,7 +7,7 @@ import { ManualTest } from '../components/dashboard/ManualTest';
 import { PurificationPanel } from '../components/dashboard/PurificationPanel';
 import { ControlPanel } from '../components/dashboard/ControlPanel';
 import { DataImport } from '../components/dashboard/DataImport';
-import { Activity, Layers, Zap, AlertTriangle, Play, Square, Skull } from 'lucide-react';
+import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
 import { api } from '../services/api';
 
 export const Dashboard: React.FC = () => {
@@ -41,13 +41,7 @@ export const Dashboard: React.FC = () => {
         }
     };
 
-    const handleInject = async () => {
-        try {
-            await api.simulateAttack();
-        } catch (e) {
-            console.error(e);
-        }
-    };
+
 
     // Derived values
     const currentRank = metrics?.effective_rank.toFixed(2) ?? '-';
@@ -75,7 +69,7 @@ export const Dashboard: React.FC = () => {
             <div className="flex items-center justify-between mb-2">
                 <div>
                     <h2 className="text-3xl font-bold text-white tracking-tight">System Dashboard</h2>
-                    <p className="text-cyan-400 text-sm font-mono mt-1">Real-time Prediction & Monitoring</p>
+                    <p className="text-cyan-400 text-sm font-mono mt-1">Real-time Poison Detection & Monitoring</p>
                 </div>
                 <div className="flex gap-4">
                     {!isMonitoring ? (
@@ -93,13 +87,6 @@ export const Dashboard: React.FC = () => {
                             <Square size={18} fill="currentColor" /> Stop
                         </button>
                     )}
-                    <button
-                        onClick={handleInject}
-                        className="flex items-center gap-2 px-6 py-2.5 bg-dark-800 border border-purple-500/50 text-purple-400 hover:bg-purple-500/10 font-bold rounded-lg transition-all"
-                        disabled={!isMonitoring}
-                    >
-                        <Skull size={18} /> Sim Attack
-                    </button>
                 </div>
             </div>
 

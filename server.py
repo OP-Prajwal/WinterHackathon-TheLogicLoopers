@@ -190,6 +190,9 @@ async def monitoring_loop():
     global state, streaming_data
     batch_size = 10  # Process 10 rows at a time
     
+    # Reset batch counter at start
+    state["batch"] = 0
+    
     # Use uploaded data if available, otherwise use pre-loaded data
     if streaming_data["tensor"] is not None:
         data_tensor = streaming_data["tensor"]
@@ -201,92 +204,64 @@ async def monitoring_loop():
         print(f"[STREAM] Using default data: {data_source}", flush=True)
     
     total_samples = len(data_tensor)
+    total_batches = (total_samples + batch_size - 1) // batch_size  # Ceiling division
     idx = 0
     
-    while state["training"]:
+    # Track results
+    poisoned_batches = []
+    clean_batches = []
+    
+    print(f"[STREAM] Total: {total_samples} rows = {total_batches} batches", flush=True)
+    
+    while state["training"] and idx < total_samples:
         state["batch"] += 1
         
         # Get Batch of 10 rows from Data
         next_idx = min(idx + batch_size, total_samples)
         batch_data = data_tensor[idx:next_idx]
+        batch_rows = len(batch_data)
+        idx = next_idx
         
-        # If we've reached the end, loop back to start (continuous simulation)
-        if len(batch_data) < batch_size or next_idx >= total_samples:
-            idx = 0  # Reset to beginning for continuous loop
-            await manager.broadcast({
-                "type": "event",
-                "data": {
-                    "severity": "info",
-                    "message": f"📊 Completed cycle of {total_samples} rows, restarting...",
-                    "batch": state['batch']
-                }
-            })
-            continue
-        else:
-            idx = next_idx
-
-        # Simulate Attack injection if flagged
-        if state["poisoned"]:
-             # Poison: Inject anomalies (e.g., massive values or correlated noise)
-             noise = torch.randn_like(batch_data) * 5.0 
-             batch_data = batch_data + noise
-        
-        # Run Prediction (Forward pass)
+        # Run Prediction (Forward pass) - detect poison naturally
         with torch.no_grad():
             embeddings = encoder(batch_data)
             rank = calculate_effective_rank(embeddings)
             density = float(embeddings.std().item())
+            
+            # Calculate embedding norms to detect anomalies
+            norms = torch.norm(embeddings, dim=1)
+            avg_norm = float(norms.mean().item())
+            max_norm = float(norms.max().item())
         
-        # Heuristic for "Poison Detected" based on visual feedback
-        # If poisoned, rank drops or density explodes depending on attack type.
-        # With noise attack, rank usually increases (whiter noise) but we want to show 'Bad' state.
-        # Let's say we trained to maximize rank of valid data (SimCLR does uniformity).
-        # Poison might cluster data (collapsing rank) OR be OOD.
+        # Poison detection based on embedding characteristics
+        # High norms or low rank indicate potential poisoned data
+        threshold = 150.0  # Same threshold as scan endpoint
+        poison_count_in_batch = int((norms > threshold).sum().item())
+        is_batch_poisoned = poison_count_in_batch > (batch_rows // 2)  # More than half poisoned
         
-        # If we injected noise, rank actually goes UP (more random). 
-        # But if we inject "constant" bias (which is a common attack), rank goes DOWN.
-        # Let's switch injection to "Bias Attack" to make rank drop (which looks "bad" usually).
-        
-        if state["poisoned"]:
-             # Override to Low Rank Attack
-             batch_data = torch.ones_like(batch_data) * 10.0 + torch.randn_like(batch_data) * 0.01
-             with torch.no_grad():
-                embeddings = encoder(batch_data)
-                rank = calculate_effective_rank(embeddings) 
-                # Ideally rank should be near 1.0 now
-        
-        # Drift Score Calculation (Demo logic)
-        # Assuming model trained on Clean has High Rank > 10.
-        
-        # Scale thresholds by sensitivity
-        # High Sensitivity (1.5) -> Critical Threshold increases (e.g. 5 * 1.5 = 7.5), distinct drop needed.
-        # Actually logic is reverse: If rank drops, it's bad.
-        # High Sensitivity => We want to trigger HALT easier? 
-        # Halt triggers if drift > 0.8.
-        # Drift > 0.8 happens if rank < threshold.
-        # So check: if rank < (5.0 * sensitivity): drift = 0.9
-        # Example: Sens 1.5 (High) -> Threshold 7.5. If rank is 6.0 (normally safe), now it's < 7.5 => ALERT. Correct.
-        
-        critical_thresh = 5.0 * state["sensitivity"]
-        warning_thresh = 15.0 * state["sensitivity"]
-        
-        drift = 0.0
-        if rank < critical_thresh:
-            drift = 0.9 # High drift/poison probability
-        elif rank < warning_thresh:
-            drift = 0.4
+        # Calculate drift score based on actual detection
+        if is_batch_poisoned:
+            drift = 0.9
+            poisoned_batches.append(state["batch"])
+        elif avg_norm > 100:
+            drift = 0.5
+            clean_batches.append(state["batch"])
         else:
-            drift = 0.05
+            drift = 0.1
+            clean_batches.append(state["batch"])
             
         metric_data = {
-            "dataset": "diabetes_brfss_stream",
+            "dataset": data_source,
             "batch": state["batch"],
+            "total_batches": total_batches,
             "effective_rank": rank,
             "density": density,
             "drift_score": drift,
-            "action": "HALT" if drift > 0.8 else "SAFE",
+            "action": "POISON" if is_batch_poisoned else "CLEAN",
             "timestamp": "now",
-            "is_poisoned": state["poisoned"] # Ground truth for demo
+            "is_poisoned": is_batch_poisoned,
+            "poison_count": poison_count_in_batch,
+            "batch_size": batch_rows
         }
         
         await manager.broadcast({
@@ -294,44 +269,42 @@ async def monitoring_loop():
             "data": metric_data
         })
         
-        # Prediction Event
-        if drift > 0.8:
-             await manager.broadcast({
+        # Emit event for each batch result
+        if is_batch_poisoned:
+            await manager.broadcast({
                 "type": "event",
                 "data": {
                     "severity": "danger",
-                    "message": f"POISON DETECTED! Batch {state['batch']} - Low Rank: {rank:.2f}",
+                    "message": f"🚨 Batch {state['batch']}/{total_batches}: POISONED ({poison_count_in_batch}/{batch_rows} rows)",
                     "batch": state['batch']
                 }
             })
-             
-             # STRICT MODE: Halt immediately on attack detection
-             if state["strict_mode"]:
-                 state["halted"] = True
-                 state["training"] = False
-                 state["status"] = "HALTED"
-                 await manager.broadcast({
-                    "type": "halt",
-                    "data": {
-                        "message": "🚨 STRICT MODE: System HALTED - Poison attack detected!",
-                        "batch": state['batch'],
-                        "rank": rank
-                    }
-                 })
-                 print(f"[STRICT MODE] System HALTED at batch {state['batch']}", flush=True)
-                 return  # Exit the monitoring loop
-                 
-        elif random.random() < 0.05:
-             await manager.broadcast({
+        else:
+            await manager.broadcast({
                 "type": "event",
                 "data": {
                     "severity": "info",
-                    "message": f"Batch {state['batch']} verified safe.",
+                    "message": f"✅ Batch {state['batch']}/{total_batches}: CLEAN",
                     "batch": state['batch']
                 }
             })
-
+        
         await asyncio.sleep(state["speed"])
+    
+    # Monitoring complete - show summary
+    state["training"] = False
+    state["status"] = "COMPLETE"
+    
+    await manager.broadcast({
+        "type": "event",
+        "data": {
+            "severity": "warning",
+            "message": f"📊 COMPLETE: {len(clean_batches)} clean, {len(poisoned_batches)} poisoned batches",
+            "batch": state['batch']
+        }
+    })
+    
+    print(f"[STREAM] Complete - Clean: {clean_batches}, Poisoned: {poisoned_batches}", flush=True)
 
 # --- API Endpoints ---
 @app.websocket("/ws/metrics")
