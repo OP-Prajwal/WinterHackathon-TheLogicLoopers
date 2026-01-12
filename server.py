@@ -509,7 +509,7 @@ def get_settings():
 @app.post("/api/settings/speed")
 def set_speed(value: float):
     """Set simulation delay in seconds (0.1 to 5.0)"""
-    state["speed"] = max(0.05, min(5.0, value))
+    state["speed"] = max(0.001, min(5.0, value))
     print(f"[SETTINGS] Speed set to: {state['speed']}s delay", flush=True)
     return {"speed": state["speed"]}
 

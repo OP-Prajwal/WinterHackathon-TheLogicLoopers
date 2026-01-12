@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, RefreshCw, Save, Activity, Zap } from 'lucide-react';
+import { Shield, AlertTriangle, Zap } from 'lucide-react';
 import { API_BASE } from '../services/api';
 
 export const Settings = () => {
     const [strictMode, setStrictMode] = useState(false);
-    const [sensitivity, setSensitivity] = useState(1.0);
     const [speed, setSpeed] = useState(1.0);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -15,7 +14,6 @@ export const Settings = () => {
             .then(res => res.json())
             .then(data => {
                 setStrictMode(data.strict_mode);
-                if (data.sensitivity) setSensitivity(data.sensitivity);
                 if (data.speed) setSpeed(data.speed);
             })
             .catch(err => console.error("Failed to fetch settings:", err));
@@ -38,28 +36,9 @@ export const Settings = () => {
         }
     };
 
-    const handleResetSystem = async () => {
-        if (!confirm('Are you sure you want to force reset the system state? This will clear any active HALT status.')) return;
 
-        setLoading(true);
-        try {
-            await fetch(`${API_BASE}/api/settings/reset-halt`, { method: 'POST' });
-            showMessage('System state reset successfully', 'success');
-        } catch (error) {
-            showMessage('Failed to reset system', 'error');
-        } finally {
-            setLoading(false);
-        }
-    };
 
-    const handleSensitivityChange = async (value: number) => {
-        setSensitivity(value);
-        try {
-            await fetch(`${API_BASE}/api/settings/sensitivity?value=${value}`, { method: 'POST' });
-        } catch (error) {
-            console.error("Failed to sync sensitivity", error);
-        }
-    };
+
 
     const handleSpeedChange = async (value: number) => {
         setSpeed(value);
@@ -120,40 +99,7 @@ export const Settings = () => {
                     </div>
                 </div>
 
-                {/* Sensitivity Control */}
-                <div className="bg-dark-800/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
-                    <div className="flex items-start gap-3 mb-4">
-                        <div className="p-3 rounded-lg bg-blue-500/20">
-                            <Activity className="w-6 h-6 text-blue-400" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-semibold text-white">Detection Sensitivity</h3>
-                            <p className="text-sm text-gray-400 mt-1">
-                                Adjust how aggressively the system flags anomalies. Higher sensitivity increases protection but may raise false positives.
-                            </p>
-                        </div>
-                    </div>
 
-                    <div className="mt-4">
-                        <div className="flex justify-between text-xs text-gray-400 mb-2">
-                            <span>Low (0.5x)</span>
-                            <span>Medium (1.0x)</span>
-                            <span>High (1.5x)</span>
-                        </div>
-                        <input
-                            type="range"
-                            min="0.5"
-                            max="1.5"
-                            step="0.5"
-                            value={sensitivity}
-                            onChange={(e) => handleSensitivityChange(parseFloat(e.target.value))}
-                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                        />
-                        <div className="text-center mt-2 text-sm text-cyan-400 font-mono">
-                            Current: {sensitivity}x Multiplier
-                        </div>
-                    </div>
-                </div>
 
                 {/* Speed Control */}
                 <div className="bg-dark-800/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
@@ -173,14 +119,15 @@ export const Settings = () => {
                         {[
                             { label: 'Slow', val: 2.0, desc: 'Analysis (2s)' },
                             { label: 'Normal', val: 1.0, desc: 'Default (1s)' },
-                            { label: 'Turbo', val: 0.1, desc: 'Fast (0.1s)' }
+                            { label: 'Fast', val: 0.1, desc: 'Rapid (0.1s)' },
+                            { label: 'Turbo', val: 0.01, desc: 'Max (0.01s)' }
                         ].map((opt) => (
                             <button
                                 key={opt.label}
                                 onClick={() => handleSpeedChange(opt.val)}
                                 className={`flex-1 p-3 rounded-xl border transition-all ${speed === opt.val
-                                        ? 'bg-orange-500/20 border-orange-500/50 text-white shadow-[0_0_15px_rgba(249,115,22,0.3)]'
-                                        : 'bg-dark-700/50 border-white/5 text-gray-400 hover:bg-dark-700'
+                                    ? 'bg-orange-500/20 border-orange-500/50 text-white shadow-[0_0_15px_rgba(249,115,22,0.3)]'
+                                    : 'bg-dark-700/50 border-white/5 text-gray-400 hover:bg-dark-700'
                                     }`}
                             >
                                 <div className="font-semibold text-sm">{opt.label}</div>
@@ -190,31 +137,7 @@ export const Settings = () => {
                     </div>
                 </div>
 
-                {/* System Reset Card */}
-                <div className="bg-dark-800/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
-                    <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="p-3 rounded-lg bg-yellow-500/20">
-                                <RefreshCw className="w-6 h-6 text-yellow-400" />
-                            </div>
-                            <div>
-                                <h3 className="text-lg font-semibold text-white">Emergency System Reset</h3>
-                                <p className="text-sm text-gray-400 mt-1">
-                                    Forcefully clear any active HALT state and return the system to IDLE mode. Use this if the system gets stuck.
-                                </p>
-                            </div>
-                        </div>
 
-                        <button
-                            onClick={handleResetSystem}
-                            disabled={loading}
-                            className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg border border-white/10 transition-colors flex items-center gap-2"
-                        >
-                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                            Reset System
-                        </button>
-                    </div>
-                </div>
             </div>
         </div>
     );
