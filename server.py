@@ -211,7 +211,6 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-<<<<<<< HEAD
 # --- Personal Training Manager ---
 class TrainingSession:
     def __init__(self, username: str, total_epochs: int = 20):
@@ -246,7 +245,7 @@ class PersonalTrainingManager:
                 pass
 
 personal_manager = PersonalTrainingManager()
-=======
+
 # --- Global storage for monitoring results ---
 monitoring_results = {
     "scan_id": None,
@@ -256,7 +255,6 @@ monitoring_results = {
     "poison_count": 0,
     "complete": False
 }
->>>>>>> origin/feat/dashboard-realtime-input-20260113
 
 # --- Monitoring/Prediction Loop ---
 async def monitoring_loop():
