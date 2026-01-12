@@ -13,6 +13,9 @@ from sklearn.preprocessing import StandardScaler
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Form
+from pydantic import BaseModel
+import io
 from pydantic import BaseModel
 from typing import List, Dict
 import sys
@@ -306,13 +309,72 @@ def reset_halt():
     return {"halted": False, "status": "IDLE"}
 
 
-@app.post("/api/dataset/scan")
-async def scan_dataset(file: UploadFile = File(...)):
-    print(f"!!! RECEIVING REQUEST: {file.filename} !!!", flush=True)
+
+# --- Data Handler Helper Functions ---
+async def load_dataset_multi_format(file: UploadFile) -> pd.DataFrame:
+    """Load dataset from various formats"""
+    filename = file.filename.lower()
+    contents = await file.read()
+    buffer = io.BytesIO(contents)
+    
     try:
-        contents = await file.read()
-        import io
-        df = pd.read_csv(io.BytesIO(contents))
+        if filename.endswith('.csv'):
+            return pd.read_csv(buffer)
+        elif filename.endswith('.json'):
+            return pd.read_json(buffer)
+        elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+            return pd.read_excel(buffer)
+        elif filename.endswith('.parquet'):
+            return pd.read_parquet(buffer)
+        elif filename.endswith('.txt'):
+            # Try parsing as CSV first
+            try:
+                buffer.seek(0)
+                return pd.read_csv(buffer)
+            except:
+                raise ValueError("Text file could not be parsed as CSV.")
+        else:
+             # Default try CSV
+             buffer.seek(0)
+             return pd.read_csv(buffer)
+    except Exception as e:
+        print(f"Error loading file {filename}: {e}")
+        raise ValueError(f"Failed to parse file: {str(e)}")
+
+def save_dataframe_multi_format(df: pd.DataFrame, base_name: str, format: str = "csv") -> tuple[str, str]:
+    """Save dataframe in requested format. Returns (full_path, relative_url)"""
+    os.makedirs("downloads", exist_ok=True)
+    
+    # Normalize format
+    format = format.lower()
+    if format not in ["csv", "json", "excel", "xlsx", "parquet"]:
+        format = "csv"
+        
+    if format == "excel": format = "xlsx"
+        
+    filename = f"{base_name}.{format}"
+    file_path = os.path.join("downloads", filename)
+    
+    if format == "csv":
+        df.to_csv(file_path, index=False)
+    elif format == "json":
+        df.to_json(file_path, orient="records", indent=2)
+    elif format == "xlsx":
+        df.to_excel(file_path, index=False)
+    elif format == "parquet":
+        df.to_parquet(file_path, index=False)
+        
+    return file_path, f"/api/downloads/{filename}"
+
+@app.post("/api/dataset/scan")
+async def scan_dataset(
+    file: UploadFile = File(...),
+    download_format: str = Form("csv")
+):
+    print(f"!!! RECEIVING REQUEST: {file.filename} (Format: {download_format}) !!!", flush=True)
+    try:
+        # Load data using multi-format handler
+        df = await load_dataset_multi_format(file)
         
         # Preprocess
         if 'Diabetes_binary' in df.columns:
@@ -425,30 +487,24 @@ async def scan_dataset(file: UploadFile = File(...)):
         poison_df = df[df['_status'] == 'POISON'].drop('_status', axis=1)
         safe_df = df[df['_status'] == 'SAFE'].drop('_status', axis=1)
         
-        # Save to files
+        # Save to files in requested format
         import uuid
         scan_id = str(uuid.uuid4())[:8]
-        poison_filename = f"poison_{scan_id}.csv"
-        safe_filename = f"safe_{scan_id}.csv"
         
-        # Ensure downloads directory exists
-        os.makedirs("downloads", exist_ok=True)
+        _, poison_url = save_dataframe_multi_format(poison_df, f"poison_{scan_id}", download_format)
+        _, safe_url = save_dataframe_multi_format(safe_df, f"safe_{scan_id}", download_format)
         
-        poison_path = os.path.join("downloads", poison_filename)
-        safe_path = os.path.join("downloads", safe_filename)
+        print(f"DEBUG: Saved results in {download_format} format", flush=True)
         
-        poison_df.to_csv(poison_path, index=False)
-        safe_df.to_csv(safe_path, index=False)
-        
-        print(f"DEBUG: Saved {len(poison_df)} poison rows to {poison_path}", flush=True)
-        print(f"DEBUG: Saved {len(safe_df)} safe rows to {safe_path}", flush=True)
+        print(f"DEBUG: Saved {len(poison_df)} poison rows to {poison_url}", flush=True)
+        print(f"DEBUG: Saved {len(safe_df)} safe rows to {safe_url}", flush=True)
 
         return {
             "total_rows": len(df),
             "poison_count": poison_count,
             "safe_count": safe_count,
-            "poison_file": f"/api/downloads/{poison_filename}",
-            "safe_file": f"/api/downloads/{safe_filename}"
+            "poison_file": poison_url,
+            "safe_file": safe_url
         }
     except Exception as e:
         print(f"Error scanning dataset: {e}")
