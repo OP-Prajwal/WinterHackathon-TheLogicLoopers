@@ -471,6 +471,32 @@ async def monitoring_loop():
             np.save(os.path.join("downloads", f"{scan_id}_clean_indices.npy"), np.array(clean_indices))
             np.save(os.path.join("downloads", f"{scan_id}_poison_indices.npy"), np.array(poison_indices))
             print(f"[STREAM] Saved indices - Clean: {len(clean_indices)}, Poison: {len(poison_indices)}", flush=True)
+
+            # Persist to MongoDB History
+            try:
+                db = get_database()
+                total = len(clean_indices) + len(poison_indices)
+                poison_rate = len(poison_indices) / max(1, total)
+                
+                # Determine threat level
+                threat_level = 'low'
+                if poison_rate > 0.5: threat_level = 'critical'
+                elif poison_rate > 0.3: threat_level = 'high'
+                elif poison_rate > 0.1: threat_level = 'medium'
+
+                history_entry = {
+                    "scan_id": scan_id,
+                    "filename": streaming_data.get("filename", "unknown"),
+                    "timestamp": datetime.now().isoformat(),
+                    "clean_count": len(clean_indices),
+                    "poison_count": len(poison_indices),
+                    "threat_level": threat_level,
+                    "model_used": state.get("active_model", "Default System Defense")
+                }
+                await db.scan_history.insert_one(history_entry)
+                print(f"[DB] Saved scan history for {scan_id}", flush=True)
+            except Exception as e:
+                print(f"[DB] Failed to save history: {e}", flush=True)
         
         await manager.broadcast({
             "type": "complete",
@@ -1010,6 +1036,13 @@ async def delete_dataset(file_id: str, current_user: dict = Depends(get_current_
          
     await fs.delete(ObjectId(file_id))
     return {"status": "deleted", "id": file_id}
+
+@app.get("/api/security/history")
+async def get_scan_history(current_user: dict = Depends(get_current_user)):
+    """Fetch recent security scan history"""
+    db = get_database()
+    history = await db.scan_history.find({}, {"_id": 0}).sort("timestamp", -1).limit(20).to_list(length=20)
+    return history
 
 import uuid
 import shutil

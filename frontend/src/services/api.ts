@@ -61,5 +61,14 @@ export const api = {
         });
         if (!res.ok) throw new Error('Failed to activate model');
         return res.json();
+    },
+
+    getScanHistory: async () => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_BASE}/api/security/history`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Failed to fetch history');
+        return res.json();
     }
 };
