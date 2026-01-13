@@ -22,6 +22,8 @@ export const PersonalTrainingPanel: React.FC = () => {
     const [finalModelLink, setFinalModelLink] = useState<string | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
 
+    const [uploadedFileId, setUploadedFileId] = useState<string | null>(null);
+
     // TODO: Ideally get token from Context/Storage
     const token = localStorage.getItem("token");
 
@@ -43,6 +45,8 @@ export const PersonalTrainingPanel: React.FC = () => {
                     body: formData
                 });
                 if (res.ok) {
+                    const data = await res.json();
+                    setUploadedFileId(data.id || data.file_id); // Capture ID
                     // alert("File uploaded to your Vault!");
                 }
             } catch (err) {
@@ -63,7 +67,11 @@ export const PersonalTrainingPanel: React.FC = () => {
 
         wsRef.current.onopen = () => {
             setIsTraining(true);
-            wsRef.current?.send(JSON.stringify({ action: "start" }));
+            // Send start with dataset_id
+            wsRef.current?.send(JSON.stringify({
+                action: "start",
+                dataset_id: uploadedFileId
+            }));
         };
 
         wsRef.current.onmessage = (event) => {

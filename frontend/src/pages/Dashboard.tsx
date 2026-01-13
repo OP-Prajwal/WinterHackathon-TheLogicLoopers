@@ -91,7 +91,9 @@ export const Dashboard: React.FC = () => {
     const driftStatus = metrics && metrics.drift_score > 0.5 ? 'warning' : 'neutral';
 
     return (
-        <div className="flex flex-col gap-5 max-w-7xl mx-auto pb-8">
+        <div className={clsx(
+            "flex flex-col gap-5 max-w-7xl mx-auto pb-8"
+        )}>
             {/* Top Section: Import & Model Selection */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="md:col-span-2">
@@ -216,6 +218,7 @@ export const Dashboard: React.FC = () => {
             </AnimatePresence>
 
 
+
             {/* Main Content Grid - Row 2: Advanced HUD */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Left: Neural Sentinel Radar */}
@@ -270,6 +273,6 @@ export const Dashboard: React.FC = () => {
                     ))}
                 </motion.div>
             </div>
-        </div >
+        </div>
     );
 };

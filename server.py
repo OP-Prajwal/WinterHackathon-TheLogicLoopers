@@ -11,6 +11,8 @@ import json
 import random
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+from torch.optim import Adam
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -220,6 +222,7 @@ manager = ConnectionManager()
 class TrainingSession:
     def __init__(self, username: str, total_epochs: int = 20):
         self.username = username
+        self.dataset_id = None # Added for real training
         self.total_epochs = total_epochs
         self.current_epoch = 0
         self.loss_history = []
@@ -300,9 +303,40 @@ async def monitoring_loop():
         idx = 0
         
         # Check for active model
-        active_model = state.get("active_model")
-        if active_model:
-            print(f"[MONITORING] Using Custom Defense Model: {active_model}", flush=True)
+        active_encoder = encoder # Default
+        active_model_id = state.get("active_model")
+        
+        if active_model_id:
+            try:
+                print(f"[MONITORING] Using Custom Defense Model: {active_model_id}", flush=True)
+                # Load model DIRECTLY from GridFS to avoid helper ambiguity
+                from bson import ObjectId
+                db = get_database() # Ensure we have DB ref
+                fs = AsyncIOMotorGridFSBucket(db)
+                
+                model_bytes = io.BytesIO()
+                # Use open_download_stream for more robust reading
+                grid_out = await fs.open_download_stream(ObjectId(active_model_id))
+                content = await grid_out.read()
+                
+                if not content:
+                    raise ValueError("Model file is empty")
+                    
+                buffer = io.BytesIO(content)
+                checkpoint = torch.load(buffer, map_location=torch.device('cpu'))
+                
+                # Re-init architecture
+                custom_encoder = TabularMLPEncoder(
+                    input_dim=checkpoint.get('input_dim', INPUT_DIM), 
+                    hidden_dim=HIDDEN_DIM, 
+                    output_dim=OUTPUT_DIM
+                )
+                custom_encoder.load_state_dict(checkpoint['encoder'])
+                active_encoder = custom_encoder
+                active_encoder.eval()
+                print("[MONITORING] Custom Model loaded and ready.", flush=True)
+            except Exception as e:
+                 print(f"[MONITORING] Failed to load custom model: {e}. Falling back to default.", flush=True)
         else:
             print(f"[MONITORING] Using Default System Defense", flush=True)        
         
@@ -312,6 +346,7 @@ async def monitoring_loop():
         poisoned_batches = []
         clean_batches = []
         
+<<<<<<< Updated upstream
         # Baseline Phase: Determine Reference Data
         # If using a custom model, the "clean" reference should be the active dataset itself (or a subet).
         # This prevents comparing shifted health data (e.g. Heart) against the default (Diabetes) baseline.
@@ -321,7 +356,21 @@ async def monitoring_loop():
              print(f"[MONITORING] Resetting baseline reference to active dataset for Custom Engine", flush=True)
         else:
              reference_data = X_test_tensor if 'X_test_tensor' in globals() else data_tensor[:min(100, total_samples)]
+=======
+        # Baseline Phase: Use KNOWN CLEAN reference (X_test_tensor) if available AND we are in default mode
+        # If we are using a custom model, we MUST use the input data as reference (self-calibration)
+        use_default_reference = ('X_test_tensor' in globals()) and (active_model_id is None)
+>>>>>>> Stashed changes
         
+        if use_default_reference:
+            reference_data = X_test_tensor
+            threshold_multiplier = 6.0 # Relaxed for cross-dataset drift
+        else:
+            # Self-Reference (Input Data)
+            # Assumption: Majority is clean. Poison is outlier.
+            reference_data = data_tensor[:min(100, total_samples)]
+            threshold_multiplier = 2.5 # TIGHTER threshold because we are self-calibrated
+            
         with torch.no_grad():
             # Use Sample from reference as Anchors
             if len(reference_data) > 500:
@@ -331,7 +380,7 @@ async def monitoring_loop():
                 anchors = reference_data
                 
             # Compute Anchor Embeddings (Normalized)
-            anchor_embeddings = encoder(anchors)
+            anchor_embeddings = active_encoder(anchors)
             anchor_embeddings = torch.nn.functional.normalize(anchor_embeddings, dim=1)
             
             # Calibration: Cross-validate on the reference set
@@ -346,8 +395,8 @@ async def monitoring_loop():
             baseline_median = float(baseline_scores.median().item())
             mad = float((baseline_scores - baseline_median).abs().median().item())
             
-            # Threshold: Median + 6 * MAD (RELAXED widely to prevent False Positives on noisy safe data)
-            dynamic_threshold = baseline_median + 6.0 * max(mad, 0.02)
+            # Threshold Calculation
+            dynamic_threshold = baseline_median + threshold_multiplier * max(mad, 0.02)
 
             # Input Statistics
             ref_mean = reference_data.mean(dim=0)
@@ -378,7 +427,7 @@ async def monitoring_loop():
                 input_outliers = (z_scores.abs() > 6.0).any(dim=1)
                 
                 # 2. Embedding-Level Anomaly Detection (Semantic Outliers)
-                embeddings = encoder(batch_data)
+                embeddings = active_encoder(batch_data)
                 embeddings = torch.nn.functional.normalize(embeddings, dim=1)
                 
                 # Metrics
@@ -704,27 +753,57 @@ async def upload_streaming_data(file: UploadFile = File(...)):
         # Load and process data (using consistent logic with scan_dataset)
         df = await load_dataset_multi_format(file)
         
-        if 'Diabetes_binary' in df.columns:
-            X = df.drop('Diabetes_binary', axis=1).values
+        # Drop TARGET columns if present (supports multiple datasets)
+        target_columns = ['Diabetes_binary', 'target', 'HeartDisease', 'Target', 'label', 'Label']
+        cols_to_drop = [c for c in target_columns if c in df.columns]
+        
+        if cols_to_drop:
+            print(f"[STREAM] Dropping target column(s): {cols_to_drop}", flush=True)
+            X = df.drop(columns=cols_to_drop).values
         else:
             X = df.values
-            
-        # Ensure input dim
-        if X.shape[1] != INPUT_DIM:
-            if X.shape[1] > INPUT_DIM:
-                X = X[:, :INPUT_DIM]
-            else:
-                padding = np.zeros((X.shape[0], INPUT_DIM - X.shape[1]))
-                X = np.hstack([X, padding])
         
-        # Scale using the GLOBAL scaler (fit on training data)
-        # This ensures consistent preprocessing.
-        try:
-             X_scaled = scaler.transform(X)
-        except Exception as e:
-             # Fallback if scaler fails (e.g. dimension mismatch despite checks)
-             print(f"[STREAM] Scaler transform failed: {e}. Falling back to manual standardization.", flush=True)
-             X_scaled = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-6)
+        # Get active model ID (we need this early for dimension handling)
+        active_model_id = state.get("active_model")
+            
+        # Dimension Handling: ONLY force INPUT_DIM for default model
+        # Custom models use their own input_dim (stored in checkpoint)
+        if not active_model_id:
+            if X.shape[1] != INPUT_DIM:
+                if X.shape[1] > INPUT_DIM:
+                    X = X[:, :INPUT_DIM]
+                else:
+                    padding = np.zeros((X.shape[0], INPUT_DIM - X.shape[1]))
+                    X = np.hstack([X, padding])
+            print(f"[STREAM] Forced dimension to {INPUT_DIM} for Default Model", flush=True)
+        else:
+            print(f"[STREAM] Keeping original dimension {X.shape[1]} for Custom Model", flush=True)
+        
+        # Scale
+        
+        if active_model_id:
+             # For custom models, we match the training logic (StandardScaler fit on the data)
+             try:
+                 scaler = StandardScaler()
+                 X_scaled = scaler.fit_transform(X)
+                 print("[STREAM] Applied Dynamic StandardScaler for Custom Model", flush=True)
+             except Exception as e:
+                 print(f"[STREAM] Dynamic scaler failed: {e}. Falling back to manual standardization.", flush=True)
+                 X_scaled = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-6)
+        else:
+             # Default Diabetes Model expects the GLOBAL scaler (fit on training data)
+             try:
+                  # Note: 'scaler' here refers to the global variable loaded at startup
+                  if 'scaler' in globals():
+                      X_scaled = scaler.transform(X)
+                  else:
+                      # If global scaler missing (unlikely), fallback
+                      ref_means = np.array([0.5]*INPUT_DIM); ref_means[3] = 28.0; ref_means[14] = 3.0
+                      ref_stds = np.array([0.5]*INPUT_DIM); ref_stds[3] = 6.0; ref_stds[14] = 5.0
+                      X_scaled = (X - ref_means) / (ref_stds + 1e-6)
+             except Exception as e:
+                  print(f"[STREAM] Global scaler transform failed: {e}. Falling back to manual.", flush=True)
+                  X_scaled = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-6)
 
         X_tensor = torch.FloatTensor(X_scaled)
         
@@ -942,11 +1021,14 @@ async def list_datasets(current_user: dict = Depends(get_current_user)):
     db = get_database()
     cursor = db.fs.files.find({"metadata.owner": current_user["username"]})
     datasets = []
+    print(f"[DEBUG] Listing datasets for {current_user['username']}...", flush=True)
     async for file in cursor:
+        ftype = file["metadata"].get("type", "Unknown")
+        print(f" - Found file: {file['filename']} | Type: {ftype}", flush=True)
         datasets.append({
             "id": str(file["_id"]),
             "name": file["filename"],
-            "type": file["metadata"].get("type", "Unknown"),
+            "type": ftype,
             "size": f"{file['length'] / 1024 / 1024:.2f} MB",
             "lastModified": file["uploadDate"].isoformat(),
             "status": "Ready",  # Default status for now
@@ -1083,6 +1165,7 @@ async def run_personal_training_loop(username: str):
             })
             return
 
+<<<<<<< Updated upstream
         content = await download_bytes_from_gridfs(file_id=str(file_doc["_id"]))
         df = pd.read_csv(io.BytesIO(content))
         
@@ -1150,6 +1233,127 @@ async def run_personal_training_loop(username: str):
         for epoch in range(1, total_epochs + 1):
             if not session.is_active:
                 break
+=======
+    # Check for real dataset
+    if session.dataset_id:
+        try:
+            print(f"Loading dataset {session.dataset_id} for training...")
+            content = await download_bytes_from_gridfs(file_id=session.dataset_id)
+            df = pd.read_csv(io.BytesIO(content))
+            
+            # Preprocessing (Supervised)
+            if 'Diabetes_binary' in df.columns:
+                X = df.drop('Diabetes_binary', axis=1).values
+                y = df['Diabetes_binary'].values
+            else:
+                # Fallback: Assume last column is target
+                X = df.iloc[:, :-1].values
+                y = df.iloc[:, -1].values
+            
+            # Scale
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+            
+            X_tensor = torch.FloatTensor(X_scaled)
+            y_tensor = torch.LongTensor(y)
+            
+            dataset = TensorDataset(X_tensor, y_tensor)
+            # drop_last=True is crucial for BatchNorm to avoid 1-sample batches
+            dataloader = DataLoader(dataset, batch_size=64, shuffle=True, drop_last=True)
+            
+            # Model Init (TabularMLP + Linear Head)
+            INPUT_DIM = X.shape[1]
+            HIDDEN_DIM = 256
+            OUTPUT_DIM = 64
+            
+            encoder = TabularMLPEncoder(input_dim=INPUT_DIM, hidden_dim=HIDDEN_DIM, output_dim=OUTPUT_DIM)
+            classifier = nn.Linear(OUTPUT_DIM, 2) # Binary Classification
+            
+            optimizer = Adam(list(encoder.parameters()) + list(classifier.parameters()), lr=1e-3)
+            criterion = nn.CrossEntropyLoss()
+            
+            print("Starting supervised training loop...")
+            
+            for epoch in range(1, session.total_epochs + 1):
+                if not session.is_active: break
+                
+                encoder.train()
+                classifier.train()
+                total_loss = 0
+                correct = 0
+                total = 0
+                
+                for batch_X, batch_y in dataloader:
+                    optimizer.zero_grad()
+                    features = encoder(batch_X)
+                    logits = classifier(features)
+                    loss = criterion(logits, batch_y)
+                    loss.backward()
+                    optimizer.step()
+                    
+                    total_loss += loss.item()
+                    preds = torch.argmax(logits, dim=1)
+                    correct += (preds == batch_y).sum().item()
+                    total += batch_y.size(0)
+                
+                avg_loss = total_loss / len(dataloader)
+                accuracy = correct / total
+                
+                session.loss_history.append(avg_loss)
+                session.accuracy_history.append(accuracy)
+                
+                await personal_manager.send_to_user(username, {
+                    "type": "metrics",
+                    "data": {
+                        "epoch": epoch,
+                        "loss": avg_loss,
+                        "accuracy": accuracy,
+                        "progress": (epoch / session.total_epochs) * 100
+                    }
+                })
+                await asyncio.sleep(0.1) # Yield to event loop
+            
+            # Save Model
+            print("Training complete. Saving model...")
+            model_filename = f"model_{username}_{uuid.uuid4().hex[:6]}.pt"
+            
+            buffer = io.BytesIO()
+            checkpoint = {
+                "encoder": encoder.state_dict(),
+                "classifier": classifier.state_dict(),
+                "input_dim": INPUT_DIM,
+                "accuracy": accuracy,
+                "timestamp": datetime.now().isoformat()
+            }
+            torch.save(checkpoint, buffer)
+            buffer.seek(0)
+            
+            await upload_bytes_to_gridfs(model_filename, buffer.getvalue(), 
+                                       metadata={"owner": username, "type": "trained_model", "accuracy": accuracy})
+            
+            await personal_manager.send_to_user(username, {
+                "type": "complete",
+                "data": {"status": "COMPLETED", "filename": model_filename, "accuracy": accuracy}
+            })
+            return
+
+        except Exception as e:
+            print(f"Personal training failed: {e}")
+            await personal_manager.send_to_user(username, {
+                "type": "error",
+                "data": {"message": f"Training failed: {str(e)}"}
+            })
+            return
+
+    # Fallback to Artificial Simulation (if no dataset provided)
+    print("No dataset provided. Running simulation.")
+    loss = 2.5
+    accuracy = 0.45
+    
+    for epoch in range(1, session.total_epochs + 1):
+        if not session.is_active:
+            break
+>>>>>>> Stashed changes
             
             epoch_loss = 0
             for x1, x2 in dataloader:
@@ -1265,7 +1469,8 @@ async def personal_training_websocket(websocket: WebSocket, token: str):
             
             if message.get("action") == "start":
                 # Initialize session if not exists or exists (overwrite)
-                session = TrainingSession(username, total_epochs=20)
+                session = TrainingSession(username, total_epochs=10) # 10 epochs for real training
+                session.dataset_id = message.get("dataset_id")
                 active_training_sessions[username] = session
                 
                 # Run loop in background
@@ -1332,9 +1537,19 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
                 X = np.hstack([X, padding])
         
         # Scale
-        ref_means = np.array([0.5]*INPUT_DIM); ref_means[3] = 28.0; ref_means[14] = 3.0
-        ref_stds = np.array([0.5]*INPUT_DIM); ref_stds[3] = 6.0; ref_stds[14] = 5.0
-        X_scaled = (X - ref_means) / (ref_stds + 1e-6)
+        if active_model_id:
+             # For custom models, we match the training logic (StandardScaler fit on the data)
+             # This assumes the inference batch/file has sufficient stats to approximate distributions
+             scaler = StandardScaler()
+             X_scaled = scaler.fit_transform(X)
+             print("[SCAN] Applied Dynamic StandardScaler for Custom Model", flush=True)
+        else:
+             # Default Diabetes Model expects these exact hardcoded stats
+             ref_means = np.array([0.5]*INPUT_DIM); ref_means[3] = 28.0; ref_means[14] = 3.0
+             ref_stds = np.array([0.5]*INPUT_DIM); ref_stds[3] = 6.0; ref_stds[14] = 5.0
+             X_scaled = (X - ref_means) / (ref_stds + 1e-6)
+             print("[SCAN] Applied Static Diabetes Normalization", flush=True)
+
         X_tensor = torch.FloatTensor(X_scaled)
         
         # Run Model
@@ -1343,12 +1558,50 @@ async def scan_dataset(file: UploadFile = File(...), current_user: dict = Depend
         batch_size = 256
         dataset_status = []
         
+        # Check for Active Custom Model
+        active_encoder = encoder # Default
+        active_model_id = state.get("active_model")
+        
+        if active_model_id:
+            try:
+                print(f"[SCAN] Loading Custom Model: {active_model_id}", flush=True)
+                # Load model DIRECTLY from GridFS
+                from bson import ObjectId
+                db = get_database()
+                fs = AsyncIOMotorGridFSBucket(db)
+                
+                model_bytes = io.BytesIO()
+                # Use open_download_stream for more robust reading
+                grid_out = await fs.open_download_stream(ObjectId(active_model_id))
+                content = await grid_out.read()
+                
+                if not content:
+                    raise ValueError("Model file is empty")
+
+                buffer = io.BytesIO(content)
+                checkpoint = torch.load(buffer, map_location=torch.device('cpu'))
+                
+                # Re-init architecture (Standard TabularMLP)
+                # In prod, saved metadata should dictate dims. Here we assume standard.
+                custom_encoder = TabularMLPEncoder(
+                    input_dim=checkpoint.get('input_dim', INPUT_DIM), 
+                    hidden_dim=HIDDEN_DIM, 
+                    output_dim=OUTPUT_DIM
+                )
+                custom_encoder.load_state_dict(checkpoint['encoder'])
+                active_encoder = custom_encoder
+                print("[SCAN] Custom Model loaded successfully.", flush=True)
+            except Exception as e:
+                print(f"[SCAN] Failed to load custom model {active_model_id}: {e}. Falling back to default.", flush=True)
+                active_encoder = encoder
+
         dynamic_threshold = 150.0 * state.get("sensitivity", 1.0)
         
         with torch.no_grad():
+            active_encoder.eval() # Ensure eval mode
             for i in range(0, len(X_tensor), batch_size):
                 batch = X_tensor[i:i+batch_size]
-                embeddings = encoder(batch)
+                embeddings = active_encoder(batch)
                 norms = torch.norm(embeddings, dim=1)
                 
                 # Calculate batch metrics
