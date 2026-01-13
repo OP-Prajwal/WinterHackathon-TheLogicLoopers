@@ -39,7 +39,9 @@ export const EventLog: React.FC<EventLogProps> = ({ events }) => {
                                 </div>
                                 <div>
                                     <div className="font-medium">{event.message}</div>
-                                    <div className="text-xs opacity-60 mt-1 font-mono">Batch ID: {event.batch}</div>
+                                    <div className="text-xs opacity-60 mt-1 font-mono">
+                                        {event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : `Batch ${event.batch}`}
+                                    </div>
                                 </div>
                             </motion.div>
                         ))

@@ -17,6 +17,7 @@ export type EventData = {
     severity: 'info' | 'warning' | 'danger';
     message: string;
     batch: number;
+    timestamp?: string;
 };
 
 export type CompletionData = {
