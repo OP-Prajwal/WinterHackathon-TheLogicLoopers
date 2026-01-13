@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Upload, Play, Square, Award, CheckCircle, Database } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -78,6 +78,11 @@ export const PersonalTrainingPanel: React.FC = () => {
                 setStatus("COMPLETE");
                 setIsTraining(false);
                 setFinalModelLink(msg.data.model_file);
+                wsRef.current?.close();
+            } else if (msg.type === "error") {
+                alert(msg.data.message);
+                setIsTraining(false);
+                setStatus("IDLE");
                 wsRef.current?.close();
             }
         };

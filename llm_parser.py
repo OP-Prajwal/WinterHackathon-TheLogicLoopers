@@ -1,29 +1,18 @@
 """
 LLM-based NLP Parser for Health Data Extraction
-Uses LangChain with Google Gemini API for intelligent text understanding
+Uses Google Generative AI SDK for intelligent text understanding
 """
 
 import os
 import json
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import google.generativeai as genai
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-    print("[LLM Parser] Loaded .env file")
-except ImportError:
-    print("[LLM Parser] python-dotenv not installed, using system env vars only")
-
-# Try to import LangChain with Gemini
-LANGCHAIN_AVAILABLE = False
-try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    LANGCHAIN_AVAILABLE = True
-    print("[LLM Parser] LangChain-Gemini imported successfully")
-except ImportError:
-    print("[LLM Parser] langchain-google-genai not installed. Using fallback parser.")
+load_dotenv()
+print("[LLM Parser] Loaded .env file")
 
 # Default health data structure based on BRFSS diabetes dataset
 DEFAULT_HEALTH_DATA = {
@@ -93,103 +82,104 @@ Return ONLY valid JSON."""
 
 
 class LLMHealthParser:
-    """LLM-based health data parser using LangChain with Gemini API"""
+    """LLM-based health data parser using Google Generative AI SDK"""
     
     def __init__(self, api_key: Optional[str] = None):
-        # Explicit load attempt
-        try:
-            from dotenv import load_dotenv, find_dotenv
-            env_file = find_dotenv()
-            print(f"[LLM Parser] Loading .env from: {env_file}")
-            load_dotenv(env_file)
-        except:
-            pass
-
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         self.model = None
         
-        print(f"[LLM Parser] DEBUG: API Key found? {'YES' if self.api_key else 'NO'}")
         if self.api_key:
-            print(f"[LLM Parser] DEBUG: API Key length: {len(self.api_key)}")
-        
-        if LANGCHAIN_AVAILABLE and self.api_key:
+            genai.configure(api_key=self.api_key)
+            
+            # List of model names to try in order of preference
+            # Added gemini-2.0-flash-exp and others that might be in the list
+            model_names = [
+                "gemini-1.5-flash",
+                "gemini-2.0-flash-exp",
+                "gemini-1.5-pro",
+                "gemini-pro",
+                "models/gemini-1.5-flash",
+                "models/gemini-1.5-pro",
+                "models/gemini-pro",
+                "gemini-1.0-pro"
+            ]
+            
+            # Try to list models and find something if the defaults fail
             try:
-                print("[LLM Parser] Initializing LangChain with Gemini...")
-                
-                # Try different model names in order of preference
-                # Use models/ prefix format as required by the API
-                model_names = [
-                    "models/gemini-2.0-flash-lite",
-                    "models/gemini-2.0-flash", 
-                    "models/gemini-1.5-flash",
-                    "models/gemini-1.5-pro",
-                    "gemini-pro",
-                ]
-                
-                for model_name in model_names:
-                    try:
-                        print(f"[LLM Parser] Trying model: {model_name}")
-                        self.model = ChatGoogleGenerativeAI(
-                            model=model_name,
-                            google_api_key=self.api_key,
-                            temperature=0.1,
-                            max_retries=2,
-                        )
-                        # Test the model with a simple call
-                        test_response = self.model.invoke("Say 'OK'")
-                        print(f"[LLM Parser] Successfully initialized with {model_name}")
-                        break
-                    except Exception as e:
-                        error_str = str(e)
-                        if "RESOURCE_EXHAUSTED" in error_str or "retryDelay" in error_str:
-                            print(f"[LLM Parser] Rate limited on {model_name}, trying next...")
-                        else:
-                            print(f"[LLM Parser] Failed with {model_name}: {e}")
-                        self.model = None
-                        continue
-                        
-                if self.model is None:
-                    print("[LLM Parser] All models failed, using fallback parser")
-                    
+                available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                print(f"[LLM Parser] Found {len(available)} models with generateContent support.")
+                if available:
+                    # Prepend discovered models to the search list
+                    model_names = [name.replace('models/', '') for name in available] + model_names
             except Exception as e:
-                print(f"[LLM Parser] Failed to initialize LangChain: {e}")
-                import traceback
-                traceback.print_exc()
-                self.model = None
+                print(f"[LLM Parser] Error listing models: {e}")
+
+            for m_name in model_names:
+                try:
+                    print(f"[LLM Parser] Attempting to init model: {m_name}")
+                    test_model = genai.GenerativeModel(m_name)
+                    # Small test call as some models exist but won't work on the key
+                    test_model.generate_content("hello", generation_config={"max_output_tokens": 5})
+                    self.model = test_model
+                    print(f"[LLM Parser] Successfully initialized with: {m_name}")
+                    break
+                except Exception as e:
+                    print(f"[LLM Parser] Model {m_name} failed: {e}")
+                    continue
+                    
+            if not self.model:
+                print("[LLM Parser] Failed to initialize any LLM model. Falling back to rule-based parser.")
         else:
-            print(f"[LLM Parser] LangChain Mode Disabled (Available: {LANGCHAIN_AVAILABLE}, Key: {'YES' if self.api_key else 'NO'})")
-    
-    def parse(self, text: str) -> Dict[str, Any]:
-        """Parse health description using LLM"""
+            print("[LLM Parser] No API key found, using rule-based parser only")
+
+    def parse(self, text: str, features: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Parse health description using LLM with rule-based fallback"""
         
-        print(f"[LLM Parser] Parsing input: {text[:100]}...", flush=True)
+        print(f"[Parser] Parsing input: {text[:100]}...", flush=True)
         
         if self.model:
-            return self._parse_with_llm(text)
+            try:
+                return self._parse_with_llm(text, features)
+            except Exception as e:
+                print(f"[Parser] LLM Runtime Error: {e}, falling back to rule-based")
+                return self._parse_rule_based(text, features)
         else:
-            print(f"[LLM Parser] WARNING: Using Fallback Parser", flush=True)
-            return self._fallback_parse(text)
-    
-    def _parse_with_llm(self, text: str) -> Dict[str, Any]:
-        """Use LangChain with Gemini to parse text"""
-        try:
+            return self._parse_rule_based(text, features)
+
+    def _parse_with_llm(self, text: str, features: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Use Google Generative AI SDK to parse text"""
+        # Dynamically adjust target features if provided
+        if features:
+            feature_json = ", ".join([f'"{f}": <value>' for f in features])
+            dynamic_prompt = EXTRACTION_PROMPT.replace(
+                '"HighBP": <0/1>, "HighChol": <0/1>, "BMI": <float>, "Smoker": <0/1>,\n        "Stroke": <0/1>, "HeartDisease": <0/1>, "PhysActivity": <0/1>,\n        "HvyAlcohol": <0/1>, "DiffWalk": <0/1>, "GenHlth": <1-5>,\n        "MentHlth": <0-30>, "PhysHlth": <0-30>, "Age": <years>',
+                feature_json
+            )
+            prompt = dynamic_prompt.format(text=text)
+        else:
             prompt = EXTRACTION_PROMPT.format(text=text)
-            response = self.model.invoke(prompt)
             
-            # Extract content from response
-            response_text = response.content.strip()
-            
-            print(f"[LLM Parser] Raw LLM Response: {response_text[:200]}...", flush=True)
-            
-            # Handle markdown code blocks
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0]
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0]
-            
-            result = json.loads(response_text)
-            
-            # Merge with defaults
+        response = self.model.generate_content(prompt)
+        response_text = response.text.strip()
+        
+        print(f"[LLM Parser] Raw Response: {response_text[:200]}...", flush=True)
+        
+        # Handle markdown code blocks
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0]
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0]
+        
+        result = json.loads(response_text)
+        
+        # Merge with defaults or custom feature list
+        if features:
+            parsed_data = {f: 0 for f in features}
+            if "extracted_data" in result:
+                for key, value in result["extracted_data"].items():
+                    if key in parsed_data:
+                        parsed_data[key] = value
+        else:
             parsed_data = DEFAULT_HEALTH_DATA.copy()
             if "extracted_data" in result:
                 for key, value in result["extracted_data"].items():
@@ -198,142 +188,94 @@ class LLMHealthParser:
                     elif key == "Age" and isinstance(value, (int, float)):
                         # Convert age years to BRFSS category
                         parsed_data["Age"] = min(13, max(1, int(value) // 5 - 3))
-            
-            print(f"[LLM Parser] Parsed BMI: {parsed_data.get('BMI')}", flush=True)
-            
-            return {
-                "parsed_data": parsed_data,
-                "contradictions": result.get("contradictions", []),
-                "anomalies": result.get("anomalies", []),
-                "risk_assessment": result.get("risk_assessment", "SAFE"),
-                "confidence": result.get("confidence", 0.8),
-                "llm_used": True
-            }
-            
-        except Exception as e:
-            print(f"[LLM Parser] LLM Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return self._fallback_parse(text)
-    
-    def _fallback_parse(self, text: str) -> Dict[str, Any]:
-        """Enhanced fallback parser when LLM is not available"""
         
-        parsed_data = DEFAULT_HEALTH_DATA.copy()
+        return {
+            "parsed_data": parsed_data,
+            "contradictions": result.get("contradictions", []),
+            "anomalies": result.get("anomalies", []),
+            "risk_assessment": result.get("risk_assessment", "SAFE"),
+            "confidence": result.get("confidence", 0.8),
+            "llm_used": True
+        }
+
+    def _parse_rule_based(self, text: str, features: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Dynamic rule-based parser that maps text to features using regex and aliases"""
+        
         text_lower = text.lower()
         anomalies = []
         contradictions = []
         
-        # === ENHANCED BMI/WEIGHT EXTRACTION ===
+        # Use provided features or default set
+        target_features = features if features else list(DEFAULT_HEALTH_DATA.keys())
+        parsed_data = {f: (DEFAULT_HEALTH_DATA.get(f, 0.0) if not features else 0.0) for f in target_features}
         
-        # Try to extract weight and calculate BMI
-        weight_patterns = [
-            r'weigh[s]?\s*(\d+\.?\d*)\s*kg',
-            r'(\d+\.?\d*)\s*kg',
-            r'weight[:\s]+(\d+\.?\d*)',
-        ]
-        
-        for pattern in weight_patterns:
-            weight_match = re.search(pattern, text_lower)
-            if weight_match:
-                weight_kg = float(weight_match.group(1))
-                # Calculate BMI using standard height of 1.75m
-                bmi = weight_kg / (1.75 * 1.75)
-                parsed_data["BMI"] = round(bmi, 1)
-                print(f"[Fallback] Extracted weight {weight_kg}kg -> BMI {parsed_data['BMI']}", flush=True)
-                
-                if weight_kg > 300:
-                    anomalies.append(f"Weight {weight_kg}kg is physiologically impossible")
-                break
-        
-        # Direct BMI extraction
-        bmi_match = re.search(r'bmi\s*(?:of|is|:)?\s*(\d+\.?\d*)', text_lower)
-        if bmi_match:
-            parsed_data["BMI"] = float(bmi_match.group(1))
-            print(f"[Fallback] Direct BMI extraction: {parsed_data['BMI']}", flush=True)
-        
-        # Age extraction
-        age_match = re.search(r'(\d+)\s*(?:years?\s*old|yo|year)', text_lower)
-        if age_match:
-            age = int(age_match.group(1))
-            parsed_data["Age"] = min(13, max(1, age // 5 - 3))
-        
-        # Mental health days
-        mental_match = re.search(r'mental\s*health.*?(\d+)', text_lower)
-        if mental_match:
-            parsed_data["MentHlth"] = float(mental_match.group(1))
-        
-        # Physical health days
-        phys_match = re.search(r'physical\s*health.*?(\d+)', text_lower)
-        if phys_match:
-            parsed_data["PhysHlth"] = float(phys_match.group(1))
-        
-        # General health scale (1-5)
-        gen_match = re.search(r'general\s*health.*?(\d)', text_lower)
-        if gen_match:
-            parsed_data["GenHlth"] = int(gen_match.group(1))
-        
-        # === CONDITION DETECTION ===
-        medical_conditions = {
-            "stroke": "Stroke",
-            "heart disease": "HeartDisease",
-            "heart attack": "HeartDisease",
-            "cardiac": "HeartDisease",
-            "hypertension": "HighBP",
-            "high blood pressure": "HighBP",
-            "blood pressure": "HighBP",
-            "high bp": "HighBP",
-            "high cholesterol": "HighChol",
-            "cholesterol": "HighChol",
-            "smoke": "Smoker",
-            "smoking": "Smoker",
-            "smoker": "Smoker",
-            "difficulty walking": "DiffWalk",
-            "wheelchair": "DiffWalk",
-            "can't walk": "DiffWalk",
-            "cannot walk": "DiffWalk",
-            "heavy drink": "HvyAlcohol",
-            "alcoholic": "HvyAlcohol",
-            "drinks heavily": "HvyAlcohol",
+        # Common aliases for features
+        aliases = {
+            "HighBP": ["blood pressure", "bp", "hypertension", "hypertensive"],
+            "HighChol": ["cholesterol", "chol", "lipids"],
+            "BMI": ["bmi", "body mass index", "weight", "mass"],
+            "Smoker": ["smoke", "smoking", "smoker", "tobacco"],
+            "Stroke": ["stroke", "brain attack"],
+            "HeartDisease": ["heart disease", "heart attack", "cardiac", "coronary"],
+            "PhysActivity": ["activity", "exercise", "active", "workout"],
+            "Fruits": ["fruit", "fruits"],
+            "Veggies": ["veggies", "vegetables", "greens"],
+            "HvyAlcohol": ["alcohol", "drink", "drinking", "alcoholic"],
+            "AnyHealthcare": ["healthcare", "health insurance", "covered"],
+            "GenHlth": ["general health", "health status", "genhlth"],
+            "MentHlth": ["mental health", "mental status", "menthlth"],
+            "PhysHlth": ["physical health", "physhlth"],
+            "DiffWalk": ["walk", "walking", "mobility", "diffwalk"],
+            "Sex": ["sex", "gender", "male", "female"],
+            "Age": ["age", "years", "yo"],
         }
         
-        for term, field in medical_conditions.items():
-            if term in text_lower:
-                parsed_data[field] = 1
-                print(f"[Fallback] Detected condition: {term} -> {field}=1", flush=True)
+        # 1. Extract Numeric Values
+        for feature in target_features:
+            search_terms = [feature] + aliases.get(feature, [])
+            for term in search_terms:
+                pattern = rf'{re.escape(term.lower())}\s*(?:is|of|:)?\s*(\d+\.?\d*)'
+                match = re.search(pattern, text_lower)
+                if match:
+                    val = float(match.group(1))
+                    if term == "weight" and "kg" in text_lower:
+                         val = val / (1.75 * 1.75)
+                    if feature == "Age" and not features:
+                         parsed_data[feature] = min(13, max(1, int(val) // 5 - 3))
+                    else:
+                         parsed_data[feature] = val
+                    break
+
+        # 2. Extract Binary Flags
+        for feature in target_features:
+            if parsed_data[feature] == 0:
+                search_terms = [feature] + aliases.get(feature, [])
+                for term in search_terms:
+                    if term.lower() in text_lower:
+                        negators = ["no ", "never ", "doesn't ", "not ", "without "]
+                        context = text_lower[max(0, text_lower.find(term.lower())-10):text_lower.find(term.lower())]
+                        if any(neg in context for neg in negators):
+                            parsed_data[feature] = 0.0
+                        else:
+                            parsed_data[feature] = 1.0
+                        break
+
+        # 3. Anomaly Detection
+        if "BMI" in parsed_data:
+            if parsed_data["BMI"] > 100:
+                anomalies.append(f"BMI {parsed_data['BMI']:.1f} is physiologically impossible")
         
-        # === ANOMALY DETECTION ===
-        if parsed_data["BMI"] > 80:
-            anomalies.append(f"BMI {parsed_data['BMI']:.1f} is physiologically impossible (max ~70)")
-        if parsed_data["BMI"] < 10:
-            anomalies.append(f"BMI {parsed_data['BMI']:.1f} is physiologically impossible (min ~12)")
-        if parsed_data["MentHlth"] > 30:
-            anomalies.append(f"Mental health days {parsed_data['MentHlth']:.0f} exceeds maximum 30")
-        if parsed_data["PhysHlth"] > 30:
-            anomalies.append(f"Physical health days {parsed_data['PhysHlth']:.0f} exceeds maximum 30")
-        
-        # === CONTRADICTION DETECTION ===
-        severe_count = sum([parsed_data["Stroke"], parsed_data["HeartDisease"], parsed_data["DiffWalk"]])
-        if severe_count >= 2:
-            if any(word in text_lower for word in ["healthy", "athlete", "fit", "perfect health"]):
-                contradictions.append("Claims healthy/athlete but has multiple severe conditions")
-        
-        # Determine risk assessment
-        if anomalies:
-            risk = "DANGEROUS"
-        elif contradictions:
-            risk = "SUSPICIOUS"
-        else:
-            risk = "SAFE"
-        
-        print(f"[Fallback] Final parsed BMI: {parsed_data['BMI']}, Risk: {risk}", flush=True)
-        
+        # Risk Assessment
+        risk = "SAFE"
+        if anomalies: risk = "DANGEROUS"
+        elif contradictions: risk = "SUSPICIOUS"
+
         return {
             "parsed_data": parsed_data,
             "contradictions": contradictions,
             "anomalies": anomalies,
             "risk_assessment": risk,
-            "confidence": 0.5,  # Medium confidence for enhanced fallback
+            "confidence": 0.7,
             "llm_used": False
         }
 
@@ -349,6 +291,6 @@ def get_parser(api_key: Optional[str] = None, force_recreate: bool = False) -> L
     return _parser_instance
 
 def reset_parser():
-    """Reset the parser singleton (useful for testing)"""
+    """Reset the parser singleton"""
     global _parser_instance
     _parser_instance = None

@@ -34,8 +34,8 @@ export const HolographicOverlay: React.FC<HolographicOverlayProps> = ({ active }
 
                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-6 text-center">
                         <motion.div
-                            animate={{ scale: [1, 1.2, 1], rotate: [0, 5, -5, 0] }}
-                            transition={{ duration: 0.5, repeat: Infinity }}
+                            animate={{ scale: [1, 1.1, 1] }}
+                            transition={{ duration: 2, repeat: Infinity }}
                             className="p-8 bg-rose-500/10 rounded-full border border-rose-500/50 shadow-[0_0_50px_rgba(244,63,94,0.4)] backdrop-blur-md"
                         >
                             <ShieldAlert size={80} className="text-rose-500" />
@@ -43,8 +43,8 @@ export const HolographicOverlay: React.FC<HolographicOverlayProps> = ({ active }
 
                         <div className="space-y-2">
                             <motion.h2
-                                animate={{ x: [-2, 2, -2], opacity: [0.8, 1, 0.8] }}
-                                transition={{ duration: 0.1, repeat: Infinity }}
+                                animate={{ opacity: [0.8, 1, 0.8] }}
+                                transition={{ duration: 2, repeat: Infinity }}
                                 className="text-6xl font-black text-rose-500 uppercase italic tracking-tighter"
                             >
                                 Threat Detected

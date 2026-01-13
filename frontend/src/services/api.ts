@@ -42,5 +42,24 @@ export const api = {
         });
         if (!res.ok) throw new Error('Check failed');
         return res.json();
+    },
+
+    getModels: async () => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_BASE}/api/models`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Failed to fetch models');
+        return { data: await res.json() };
+    },
+
+    setActiveModel: async (modelId: string) => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_BASE}/api/models/activate?model_id=${modelId}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Failed to activate model');
+        return res.json();
     }
 };

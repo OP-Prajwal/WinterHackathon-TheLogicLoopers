@@ -10,7 +10,6 @@ import { ScanResultPanel } from '../components/dashboard/ScanResultPanel';
 import { Activity, Layers, Zap, AlertTriangle, Play, Square } from 'lucide-react';
 import { NeuralSentinel } from '../components/dashboard/NeuralSentinel';
 import { SecurityAdvisor } from '../components/dashboard/SecurityAdvisor';
-import { HolographicOverlay } from '../components/dashboard/HolographicOverlay';
 import { EnsembleConsensus } from '../components/dashboard/EnsembleConsensus';
 import { api } from '../services/api';
 import clsx from 'clsx';
@@ -20,6 +19,9 @@ export const Dashboard: React.FC = () => {
     const [history, setHistory] = useState<MetricsData[]>([]);
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [loadedData, setLoadedData] = useState<{ filename: string; rows: number } | null>(null);
+    const [availableModels, setAvailableModels] = useState<any[]>([]);
+    const [activeModelId, setActiveModelId] = useState<string>("default");
+    const [isSwitching, setIsSwitching] = useState(false);
 
     // Sync state with metrics for the chart
     useEffect(() => {
@@ -27,6 +29,22 @@ export const Dashboard: React.FC = () => {
             setHistory(prev => [...prev, metrics].slice(-100));
         }
     }, [metrics]);
+
+    // Fetch available models on mount
+    useEffect(() => {
+        const fetchModels = async () => {
+            try {
+                const response = await api.getModels();
+                setAvailableModels(response.data);
+                if (response.data.length > 0) {
+                    setActiveModelId(response.data[0].id); // Set the first model as active by default
+                }
+            } catch (error) {
+                console.error("Failed to fetch models:", error);
+            }
+        };
+        fetchModels();
+    }, []);
 
     const handleStart = async () => {
         try {
@@ -47,6 +65,20 @@ export const Dashboard: React.FC = () => {
         }
     };
 
+    const handleModelChange = async (modelId: string) => {
+        setIsSwitching(true);
+        try {
+            await api.setActiveModel(modelId);
+            setActiveModelId(modelId);
+            console.log(`Switched to model: ${modelId}`);
+        } catch (error) {
+            console.error("Failed to switch model:", error);
+            alert(`Failed to switch model: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            setIsSwitching(false);
+        }
+    };
+
     // Derived values
     const currentRank = metrics?.effective_rank.toFixed(2) ?? '-';
     const density = metrics?.density.toFixed(4) ?? '-';
@@ -59,10 +91,7 @@ export const Dashboard: React.FC = () => {
     const driftStatus = metrics && metrics.drift_score > 0.5 ? 'warning' : 'neutral';
 
     return (
-        <div className={clsx(
-            "flex flex-col gap-5 max-w-7xl mx-auto pb-8",
-            (metrics?.drift_score ?? 0) > 0.9 && "animate-glitch"
-        )}>
+        <div className="flex flex-col gap-5 max-w-7xl mx-auto pb-8">
             {/* Top Section: Import & Model Selection */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="md:col-span-2">
@@ -77,7 +106,7 @@ export const Dashboard: React.FC = () => {
 
 
 
-            {/* Header / Controls */}
+            {/* Active Dataset Status */}
             {loadedData && (
                 <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-sm">
                     <span className="text-gray-400">Ready to process:</span>
@@ -85,27 +114,65 @@ export const Dashboard: React.FC = () => {
                     <span className="text-gray-500">({loadedData.rows} rows)</span>
                 </div>
             )}
-            <div className="flex items-center justify-between mb-2">
+            {/* Header / Controls */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
                 <div>
-                    <h2 className="text-3xl font-bold text-white tracking-tight">System Dashboard</h2>
-                    <p className="text-cyan-400 text-sm font-mono mt-1">Real-time Poison Detection & Monitoring</p>
+                    <h1 className="text-4xl font-black text-white tracking-tighter flex items-center gap-3">
+                        <Activity className="text-cyan-400 animate-pulse" size={36} />
+                        SYSTEM OVERVIEW
+                    </h1>
+                    <p className="text-xs text-gray-500 font-mono tracking-widest mt-1 uppercase">Advanced Neural Threat Detection Hub</p>
                 </div>
-                <div className="flex gap-4">
-                    {!isMonitoring ? (
+
+                <div className="flex items-center gap-3">
+                    {/* Active Neural Engine Selector */}
+                    <div className="flex flex-col gap-1 min-w-[200px]">
+                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1">
+                            <Layers size={10} /> Neural Engine
+                        </span>
+                        <select
+                            value={activeModelId}
+                            onChange={(e) => handleModelChange(e.target.value)}
+                            disabled={isSwitching}
+                            className="bg-dark-900/60 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500/50 appearance-none cursor-pointer hover:bg-dark-800 transition-colors"
+                        >
+                            <option value="default">CORE_DIABETES_v2.0</option>
+                            {availableModels.map(m => (
+                                <option key={m.id} value={m.id}>
+                                    {m.filename.replace('.pt', '').toUpperCase()} ({Math.round(m.accuracy * 100)}%)
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="flex items-center gap-2 p-1.5 bg-dark-900/40 rounded-xl border border-white/5">
                         <button
                             onClick={handleStart}
-                            className="flex items-center gap-2 px-6 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-lg shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all transform hover:scale-105"
+                            disabled={isMonitoring}
+                            className={clsx(
+                                "flex items-center gap-2 px-6 py-2.5 rounded-lg font-black text-sm transition-all duration-500 uppercase tracking-tighter",
+                                isMonitoring
+                                    ? "bg-dark-800 text-gray-600 cursor-not-allowed border border-white/5"
+                                    : "bg-cyan-500 hover:bg-cyan-400 text-black shadow-[0_0_20px_rgba(6,182,212,0.4)] hover:scale-105 active:scale-95"
+                            )}
                         >
-                            <Play size={18} fill="currentColor" /> Start Monitoring
+                            <Play size={16} fill="currentColor" />
+                            Initialize Stream
                         </button>
-                    ) : (
+
                         <button
                             onClick={handleStop}
-                            className="flex items-center gap-2 px-6 py-2.5 bg-dark-800 border border-red-500/50 text-red-400 hover:bg-red-500/10 font-bold rounded-lg transition-all"
+                            disabled={!isMonitoring}
+                            className={clsx(
+                                "p-2.5 rounded-lg transition-all duration-300",
+                                !isMonitoring
+                                    ? "text-gray-700 cursor-not-allowed"
+                                    : "text-rose-500 hover:bg-rose-500/10 border border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.2)]"
+                            )}
                         >
-                            <Square size={18} fill="currentColor" /> Stop
+                            <Square size={18} fill="currentColor" />
                         </button>
-                    )}
+                    </div>
                 </div>
             </div>
 
@@ -148,7 +215,6 @@ export const Dashboard: React.FC = () => {
                 )}
             </AnimatePresence>
 
-            <HolographicOverlay active={(metrics?.drift_score ?? 0) > 0.9} />
 
             {/* Main Content Grid - Row 2: Advanced HUD */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
