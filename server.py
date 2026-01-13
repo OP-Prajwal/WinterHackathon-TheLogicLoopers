@@ -346,21 +346,9 @@ async def monitoring_loop():
         poisoned_batches = []
         clean_batches = []
         
-<<<<<<< Updated upstream
-        # Baseline Phase: Determine Reference Data
-        # If using a custom model, the "clean" reference should be the active dataset itself (or a subet).
-        # This prevents comparing shifted health data (e.g. Heart) against the default (Diabetes) baseline.
-        if active_model_metadata:
-             # Use current uploaded data as baseline for custom model
-             reference_data = data_tensor[:min(500, total_samples)]
-             print(f"[MONITORING] Resetting baseline reference to active dataset for Custom Engine", flush=True)
-        else:
-             reference_data = X_test_tensor if 'X_test_tensor' in globals() else data_tensor[:min(100, total_samples)]
-=======
         # Baseline Phase: Use KNOWN CLEAN reference (X_test_tensor) if available AND we are in default mode
         # If we are using a custom model, we MUST use the input data as reference (self-calibration)
         use_default_reference = ('X_test_tensor' in globals()) and (active_model_id is None)
->>>>>>> Stashed changes
         
         if use_default_reference:
             reference_data = X_test_tensor
@@ -1147,93 +1135,15 @@ async def run_personal_training_loop(username: str):
     if not session:
         return
 
-    print(f"Starting real personal training for {username}")
+    print(f"Starting personal training for {username}")
     session.is_active = True
     
-    try:
-        # 1. Fetch training data from GridFS
-        db = get_database()
-        # Find the latest training data for this user
-        file_doc = await db.fs.files.find_one(
-            {"metadata.owner": username, "metadata.type": "training_data"},
-            sort=[("uploadDate", -1)]
-        )
-        
-        if not file_doc:
-            await personal_manager.send_to_user(username, {
-                "type": "error", "data": {"message": "No training dataset found in your Vault."}
-            })
-            return
+    # Send "started" event
+    await personal_manager.send_to_user(username, {
+        "type": "status",
+        "data": {"status": "TRAINING", "epoch": 0, "total_epochs": session.total_epochs}
+    })
 
-<<<<<<< Updated upstream
-        content = await download_bytes_from_gridfs(file_id=str(file_doc["_id"]))
-        df = pd.read_csv(io.BytesIO(content))
-        
-        # 2. Dynamic Schema Detection
-        # Identify target (for exclusion) - common targets or the user can specify
-        potential_targets = ['target', 'label', 'Diabetes_binary', 'Outcome', 'high_risk']
-        target_col = next((c for c in potential_targets if c in df.columns), None)
-        
-        if target_col:
-            X = df.drop(columns=[target_col]).values
-            feature_names = df.drop(columns=[target_col]).columns.tolist()
-        else:
-            X = df.values
-            feature_names = df.columns.tolist()
-
-        input_dim = X.shape[1]
-        
-        # 3. Preprocessing
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        
-        # Store metadata for deployment
-        scaler_params = {
-            "mean": scaler.mean_.tolist(),
-            "scale": scaler.scale_.tolist(),
-            "features": feature_names
-        }
-
-        # 4. Prepare DataLoader
-        class ContrastiveDataset(Dataset):
-            def __init__(self, data):
-                self.data = torch.FloatTensor(data)
-            def __len__(self):
-                return len(self.data)
-            def __getitem__(self, idx):
-                x = self.data[idx]
-                noise1 = torch.randn_like(x) * 0.1
-                noise2 = torch.randn_like(x) * 0.1
-                return x + noise1, x + noise2
-
-        if len(X_scaled) < 2:
-            await personal_manager.send_to_user(username, {
-                "type": "error", "data": {"message": "Dataset too small for neural training (minimum 2 samples required)."}
-            })
-            return
-
-        dataset = ContrastiveDataset(X_scaled)
-        # Use drop_last=True to avoid single-sample batches causing BatchNorm failure
-        dataloader = DataLoader(dataset, batch_size=min(len(dataset), 64), shuffle=True, drop_last=True)
-
-        # 5. Model Initialization
-        hidden_dim = 256
-        output_dim = 64
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        encoder = TabularMLPEncoder(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim).to(device)
-        head = ProjectionHead(input_dim=output_dim, hidden_dim=hidden_dim, output_dim=output_dim).to(device)
-        
-        loss_fn = NTXentLoss(temperature=0.5).to(device)
-        optimizer = torch.optim.Adam(list(encoder.parameters()) + list(head.parameters()), lr=1e-3)
-        trainer = PoisonGuardTrainer(encoder, head, optimizer, loss_fn)
-
-        # 6. Real Training Loop
-        total_epochs = session.total_epochs
-        for epoch in range(1, total_epochs + 1):
-            if not session.is_active:
-                break
-=======
     # Check for real dataset
     if session.dataset_id:
         try:
@@ -1353,79 +1263,36 @@ async def run_personal_training_loop(username: str):
     for epoch in range(1, session.total_epochs + 1):
         if not session.is_active:
             break
->>>>>>> Stashed changes
             
-            epoch_loss = 0
-            for x1, x2 in dataloader:
-                x1, x2 = x1.to(device), x2.to(device)
-                loss = trainer.train_step(x1, x2)
-                epoch_loss += loss
-            
-            avg_loss = epoch_loss / len(dataloader)
-            # Accuracy is simulated for contrastive learning in this demo 
-            # (In real SimCLR, use top-1/top-5 retrieval accuracy)
-            sim_acc = min(0.99, 0.4 + (epoch/total_epochs)*0.5 + random.uniform(-0.02, 0.02))
-            
-            session.current_epoch = epoch
-            session.loss_history.append(avg_loss)
-            session.accuracy_history.append(sim_acc)
-            
-            await personal_manager.send_to_user(username, {
-                "type": "metrics",
-                "data": {
-                    "epoch": epoch,
-                    "loss": avg_loss,
-                    "accuracy": sim_acc,
-                    "progress": (epoch / total_epochs) * 100
-                }
-            })
-            await asyncio.sleep(0.1) # Smooth UI updates
-
-        # 7. Finalize & Save
-        model_filename = f"model_{username}_{int(datetime.utcnow().timestamp())}.pt"
-        checkpoint = {
-            'encoder': encoder.state_dict(),
-            'metadata': {
-                'input_dim': input_dim,
-                'hidden_dim': hidden_dim,
-                'output_dim': output_dim,
-                'scaler': scaler_params,
-                'features': feature_names
-            }
-        }
+        # Simulation decay
+        loss -= random.uniform(0.1, 0.2)
+        accuracy += random.uniform(0.03, 0.06)
+        loss = max(0.1, loss)
+        accuracy = min(0.98, accuracy)
         
-        buffer = io.BytesIO()
-        torch.save(checkpoint, buffer)
-        
-        await upload_bytes_to_gridfs(
-            model_filename, 
-            buffer.getvalue(), 
-            metadata={
-                "owner": username, 
-                "type": "trained_model", 
-                "accuracy": sim_acc,
-                "dataset": file_doc["filename"]
-            }
-        )
+        session.current_epoch = epoch
+        session.loss_history.append(loss)
+        session.accuracy_history.append(accuracy)
         
         await personal_manager.send_to_user(username, {
-            "type": "complete",
+            "type": "metrics",
             "data": {
-                "final_accuracy": sim_acc,
-                "model_file": f"/api/downloads/{model_filename}",
-                "message": "Neural Engine updated with custom intelligence."
+                "epoch": epoch,
+                "loss": loss,
+                "accuracy": accuracy,
+                "progress": (epoch / session.total_epochs) * 100
             }
         })
-        
-    except Exception as e:
-        print(f"Personal training failed: {e}")
-        import traceback
-        traceback.print_exc()
-        await personal_manager.send_to_user(username, {
-            "type": "error", "data": {"message": f"Training failed: {str(e)}"}
-        })
-    finally:
-        session.is_active = False
+        await asyncio.sleep(0.5)  # Slower for demo effect
+    
+    await personal_manager.send_to_user(username, {
+        "type": "complete",
+        "data": {
+            "final_accuracy": accuracy,
+            "message": "Simulation complete (no custom dataset used)."
+        }
+    })
+    session.is_active = False
 
 
 @app.post("/api/training/personal/upload")
