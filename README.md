@@ -156,18 +156,22 @@ npm run dev
 
 ```
 src/
- └── poison_guard/
-     ├── core/              # Core interfaces
-     ├── data/              # Dataset adapters
-     ├── models/            # Encoders & contrastive heads
-     ├── baselines/         # Behavioral fingerprints
-     ├── security_engine/   # Spectral & geometric detection
-     └── pipeline/          # Trainer & Auditor
+ ├── poison_guard/
+ │   ├── core/              # Core interfaces
+ │   ├── data/              # Dataset adapters
+ │   ├── models/            # Encoders & contrastive heads
+ │   ├── baselines/         # Behavioral fingerprints
+ │   ├── security_engine/   # Spectral & geometric detection
+ │   └── pipeline/          # Trainer & Auditor
+ ├── llm_parser.py          # Gemini AI Integration Module
+ └── metrics.py             # Shared Metrics Logic
+
+scripts/                    # Utility & Training Scripts
+ ├── train_model.py         # Main Training Pipeline
+ ├── generate_test_data.py  # Data Generator
+ └── verify_*.py            # Verification Scripts
 
 server.py                   # FastAPI Backend (Defense Firewall)
-llm_parser.py               # Gemini AI Integration Module
-train_model.py              # Main Training Pipeline
-generate_test_data.py       # Syntax-checker / Data Generator
 .env                        # API Key Configuration
 ```
 
