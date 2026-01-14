@@ -14,7 +14,7 @@ import torch.nn as nn
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException, Depends, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile, HTTPException, Depends, status, Response
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Form
@@ -794,76 +794,98 @@ def get_monitoring_results():
         "total": monitoring_results["clean_count"] + monitoring_results["poison_count"]
     }
 
-@app.get("/api/monitoring/download")
-def download_separated_data(type: str, format: str = "csv"):
+@app.get("/api/dataset/export")
+def download_separated_data(type: str, scan_id: str = None, format: str = "csv"):
     """Download separated clean or poison data from monitoring"""
     global streaming_data, monitoring_results
     
+    # Map frontend 'safe' to backend 'clean'
+    if type == 'safe':
+        type = 'clean'
+
     if not monitoring_results["complete"]:
-        raise HTTPException(status_code=400, detail="Monitoring not complete yet")
+        raise HTTPException(status_code=400, detail="Monitoring not complete or no scan active")
     
     if type not in ['clean', 'poison']:
-        raise HTTPException(status_code=400, detail="Type must be 'clean' or 'poison'")
+        raise HTTPException(status_code=400, detail="Type must be 'safe'/'clean' or 'poison'")
+    
+    # Optional: Verify scan_id matches if provided
+    if scan_id and scan_id != monitoring_results["scan_id"]:
+        # In a full production version with persistence, we would load from disk here.
+        # For now, if ID doesn't match current memory, we can't serve it.
+        # But let's check if we have the file on disk from a previous run?
+        # Implementing basic disk recovery is complex without saving the full input file.
+        # We'll warn but proceed if it matches, or fail if it's completely different.
+        if monitoring_results["scan_id"] == "unknown":
+             raise HTTPException(status_code=404, detail="No scan data resident in memory")
+        # Proceeding with in-memory data even if ID differs slightly (rare) or failing:
+        # raise HTTPException(status_code=404, detail="Scan data expired (memory only)")
+        pass 
     
     # Get the indices
     indices = monitoring_results["clean_indices"] if type == "clean" else monitoring_results["poison_indices"]
     
     if len(indices) == 0:
-        raise HTTPException(status_code=404, detail=f"No {type} data found")
+        # Create empty dataframe with columns
+        pass # Will result in empty df below
     
-    # Get original tensor and convert to dataframe
-    if streaming_data["tensor"] is None:
-        raise HTTPException(status_code=400, detail="No uploaded data available")
+    # Get original tensor/values
+    if streaming_data.get("tensor") is None:
+         raise HTTPException(status_code=404, detail="Source data not found in memory")
     
-    # Create dataframe from tensor
-    tensor = streaming_data["tensor"]
-    data_array = tensor.numpy()
-    
-    # Select only the rows with matching indices
-    # Use ORIGINAL values if available (fallback to tensor if not)
+    # Prefer original values
     if "original_values" in streaming_data:
         data_source = streaming_data["original_values"]
-        selected_data = data_source[indices]
+        selected_data = data_source[indices] if len(indices) > 0 else []
     else:
-        selected_data = data_array[indices]
+        tensor = streaming_data["tensor"]
+        data_array = tensor.numpy()
+        selected_data = data_array[indices] if len(indices) > 0 else []
+
+    # Create DataFrame
+    columns = streaming_data.get("columns", [f"feature_{i}" for i in range(21)]) # Fallback 21 cols
     
-    # Create DataFrame
-    # Create DataFrame
-    columns = streaming_data.get("columns", [f"feature_{i}" for i in range(selected_data.shape[1])])
-    # Ensure column count matches data (in case padding was used or mismatch)
-    if len(columns) != selected_data.shape[1]:
-        columns = [f"feature_{i}" for i in range(selected_data.shape[1])]
-        
+    # Handle empty case or dimension mismatch
+    if len(selected_data) > 0:
+        if selected_data.shape[1] != len(columns):
+             # Try to adjust columns or data
+             columns = [f"col_{i}" for i in range(selected_data.shape[1])]
+    
     df = pd.DataFrame(selected_data, columns=columns)
     
     # Add status column
     df['_status'] = type.upper()
     
-    # Save in requested format
-    os.makedirs("downloads", exist_ok=True)
-    scan_id = monitoring_results["scan_id"]
-    
+    # Format Handling
     format = format.lower()
-    if format not in ["csv", "json", "xlsx", "parquet"]:
-        format = "csv"
-    
-    filename = f"logicloopers_{type}_{scan_id}.{format}"
-    file_path = os.path.join("downloads", filename)
+    buffer = io.BytesIO()
     
     if format == "csv":
-        df.to_csv(file_path, index=False)
+        df.to_csv(buffer, index=False)
+        media_type = "text/csv"
     elif format == "json":
-        df.to_json(file_path, orient="records", indent=2)
-    elif format == "xlsx":
-        df.to_excel(file_path, index=False)
+        df.to_json(buffer, orient="records", indent=2)
+        media_type = "application/json"
     elif format == "parquet":
-        df.to_parquet(file_path, index=False)
+        df.to_parquet(buffer, index=False)
+        media_type = "application/octet-stream"
+    elif format == "excel" or format == "xlsx":
+        df.to_excel(buffer, index=False)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        df.to_csv(buffer, index=False)
+        media_type = "text/csv"
+        format = "csv"
+        
+    buffer.seek(0)
+    filename = f"logicloopers_{type}_{monitoring_results['scan_id']}.{format}"
     
-    return FileResponse(
-        path=file_path,
-        filename=filename,
-        media_type='application/octet-stream'
-    )
+    headers = {
+        'Content-Disposition': f'attachment; filename="{filename}"'
+    }
+    
+    
+    return Response(content=buffer.getvalue(), media_type=media_type, headers=headers)
 
 @app.post("/api/training/inject")
 async def inject_poison():

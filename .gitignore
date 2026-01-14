@@ -1,21 +1,24 @@
+# General
 venv/
 __pycache__/
 *.pyc
-.env
 .DS_Store
-.vscode/
 
-# Node
-node_modules/
-npm-debug.log
-yarn-error.log
-
-# Frontend build
-frontend/dist/
-frontend/build/
-
-# Application data
+# Data
+*.csv
 downloads/
 temp_scans/
-model_inference_log.txt
-env/
+data/
+!data/diabetes_brfss.csv
+
+# Models
+*.pt
+!trained_model_v2.pt
+
+# Logs
+*.txt
+*.log
+
+# Scripts Output (if any)
+scripts/__pycache__/
+src/__pycache__/
